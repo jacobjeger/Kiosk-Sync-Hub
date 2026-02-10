@@ -1,38 +1,19 @@
-import { type User, type InsertUser } from "@shared/schema";
-import { randomUUID } from "crypto";
-
-// modify the interface with any CRUD methods
-// you might need
+import { db } from "./db";
+import { transactions, type InsertTransaction, type Transaction } from "@shared/schema";
 
 export interface IStorage {
-  getUser(id: string): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
+  // We keep this minimal since the primary source of truth is Supabase for history
+  // and local Dexie for offline. But we might want to log things here if needed.
+  // For now, this is just a placeholder as requested to not mess up the server structure.
+  // The client will talk to Supabase directly for history when online.
+  // However, if we wanted a server-side component, we could add it here.
+  ping(): Promise<boolean>;
 }
 
-export class MemStorage implements IStorage {
-  private users: Map<string, User>;
-
-  constructor() {
-    this.users = new Map();
-  }
-
-  async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
-  }
-
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
-    );
-  }
-
-  async createUser(insertUser: InsertUser): Promise<User> {
-    const id = randomUUID();
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
-    return user;
+export class DatabaseStorage implements IStorage {
+  async ping(): Promise<boolean> {
+    return true;
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new DatabaseStorage();
