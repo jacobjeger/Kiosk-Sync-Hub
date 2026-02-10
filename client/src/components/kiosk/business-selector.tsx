@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, memo, useCallback } from "react";
 import { Search, Store, Coffee, ShoppingBag, UtensilsCrossed } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import type { Business, Member } from "@/lib/types";
@@ -15,6 +15,41 @@ const categoryIcons: Record<string, JSX.Element> = {
   cafe: <Coffee className="w-5 h-5" />,
   default: <Store className="w-5 h-5" />,
 };
+
+const BusinessButton = memo(function BusinessButton({
+  business,
+  onSelect,
+  isFavorite,
+}: {
+  business: Business;
+  onSelect: (business: Business) => void;
+  isFavorite?: boolean;
+}) {
+  return (
+    <button
+      data-testid={`button-${isFavorite ? "fav-" : ""}business-${business.id}`}
+      onClick={() => onSelect(business)}
+      className={`rounded-xl p-4 flex flex-col items-center gap-2 border transition-all active:scale-[0.98] min-h-[80px] ${
+        isFavorite
+          ? "bg-gradient-to-br from-emerald-50 to-emerald-100/50 border-emerald-200 hover:border-emerald-300 hover:shadow-md"
+          : "bg-white border-stone-200 hover:border-stone-300 hover:shadow-sm"
+      }`}
+    >
+      <div
+        className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+          isFavorite
+            ? "bg-emerald-100 text-emerald-600"
+            : "bg-stone-100 text-stone-600"
+        }`}
+      >
+        {categoryIcons[business.category || "default"] || categoryIcons.default}
+      </div>
+      <p className="font-medium text-stone-900 text-center text-sm leading-tight line-clamp-2">
+        {business.name}
+      </p>
+    </button>
+  );
+});
 
 export function BusinessSelector({
   businesses,
@@ -102,23 +137,25 @@ export function BusinessSelector({
     return { topBusinessesList: top, allOtherBusinesses: others };
   }, [businesses, topBusinesses]);
 
-  const filteredTopBusinesses = topBusinessesList.filter((business) => {
-    if (!search) return true;
+  const filteredTopBusinesses = useMemo(() => {
+    if (!search) return topBusinessesList;
     const searchLower = search.toLowerCase();
-    return (
-      business.name.toLowerCase().includes(searchLower) ||
-      business.description?.toLowerCase().includes(searchLower)
+    return topBusinessesList.filter(
+      (business) =>
+        business.name.toLowerCase().includes(searchLower) ||
+        business.description?.toLowerCase().includes(searchLower)
     );
-  });
+  }, [topBusinessesList, search]);
 
-  const filteredOtherBusinesses = allOtherBusinesses.filter((business) => {
-    if (!search) return true;
+  const filteredOtherBusinesses = useMemo(() => {
+    if (!search) return allOtherBusinesses;
     const searchLower = search.toLowerCase();
-    return (
-      business.name.toLowerCase().includes(searchLower) ||
-      business.description?.toLowerCase().includes(searchLower)
+    return allOtherBusinesses.filter(
+      (business) =>
+        business.name.toLowerCase().includes(searchLower) ||
+        business.description?.toLowerCase().includes(searchLower)
     );
-  });
+  }, [allOtherBusinesses, search]);
 
   const hasTopBusinesses = filteredTopBusinesses.length > 0;
 
@@ -171,20 +208,12 @@ export function BusinessSelector({
                     />
                   ))
                 : filteredTopBusinesses.map((business) => (
-                    <button
+                    <BusinessButton
                       key={business.id}
-                      data-testid={`button-fav-business-${business.id}`}
-                      onClick={() => onSelect(business)}
-                      className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 rounded-xl p-4 flex flex-col items-center gap-2 border border-emerald-200 hover:border-emerald-300 hover:shadow-md transition-all active:scale-[0.98] min-h-[80px]"
-                    >
-                      <div className="w-10 h-10 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-600">
-                        {categoryIcons[business.category || "default"] ||
-                          categoryIcons.default}
-                      </div>
-                      <p className="font-medium text-stone-900 text-center text-sm leading-tight line-clamp-2">
-                        {business.name}
-                      </p>
-                    </button>
+                      business={business}
+                      onSelect={onSelect}
+                      isFavorite
+                    />
                   ))}
             </div>
           </div>
@@ -199,20 +228,11 @@ export function BusinessSelector({
             )}
             <div className="grid grid-cols-2 gap-2">
               {filteredOtherBusinesses.map((business) => (
-                <button
+                <BusinessButton
                   key={business.id}
-                  data-testid={`button-business-${business.id}`}
-                  onClick={() => onSelect(business)}
-                  className="bg-white rounded-xl p-4 flex flex-col items-center gap-2 border border-stone-200 hover:border-stone-300 hover:shadow-sm transition-all active:scale-[0.98] min-h-[80px]"
-                >
-                  <div className="w-10 h-10 rounded-lg bg-stone-100 flex items-center justify-center text-stone-600">
-                    {categoryIcons[business.category || "default"] ||
-                      categoryIcons.default}
-                  </div>
-                  <p className="font-medium text-stone-900 text-center text-sm leading-tight line-clamp-2">
-                    {business.name}
-                  </p>
-                </button>
+                  business={business}
+                  onSelect={onSelect}
+                />
               ))}
             </div>
           </div>

@@ -71,7 +71,19 @@ export function useKioskData() {
     init();
 
     const interval = setInterval(fetchFromSupabase, 60000);
-    return () => clearInterval(interval);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        console.log("[kiosk] App resumed - refreshing data");
+        fetchFromSupabase();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
   }, [loadFromLocal, fetchFromSupabase]);
 
   return { members, businesses, isLoading, isError, refresh };

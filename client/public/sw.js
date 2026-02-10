@@ -1,4 +1,4 @@
-const CACHE_NAME = "pdca-kiosk-v1";
+const CACHE_NAME = "pdca-kiosk-v2";
 const STATIC_ASSETS = [
   "/",
   "/icon-192.png",
@@ -33,25 +33,44 @@ self.addEventListener("fetch", (event) => {
 
   if (request.url.includes("supabase.co")) return;
 
-  if (request.url.includes("fonts.googleapis.com") || request.url.includes("fonts.gstatic.com")) return;
-
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
+  const isAsset =
+    request.url.includes("/assets/") ||
+    request.url.endsWith(".js") ||
+    request.url.endsWith(".css") ||
+    request.url.endsWith(".png") ||
+    request.url.endsWith(".svg") ||
+    request.url.endsWith(".woff2");
+
+  if (isAsset) {
+    event.respondWith(
+      caches.open(CACHE_NAME).then((cache) =>
+        cache.match(request).then((cached) => {
+          if (cached) return cached;
+          return fetch(request).then((response) => {
+            if (response.ok) cache.put(request, response.clone());
+            return response;
+          }).catch(() => cached || new Response("Offline", { status: 503 }));
+        })
+      )
+    );
+    return;
+  }
+
   event.respondWith(
     caches.open(CACHE_NAME).then((cache) =>
-      cache.match(request).then((cached) => {
-        const networkFetch = fetch(request)
-          .then((response) => {
-            if (response.ok) {
-              cache.put(request, response.clone());
-            }
-            return response;
-          })
-          .catch(() => cached || new Response("Offline", { status: 503 }));
-
-        return cached || networkFetch;
-      })
+      fetch(request)
+        .then((response) => {
+          if (response.ok) cache.put(request, response.clone());
+          return response;
+        })
+        .catch(() =>
+          cache.match(request).then(
+            (cached) => cached || new Response("Offline", { status: 503 })
+          )
+        )
     )
   );
 });

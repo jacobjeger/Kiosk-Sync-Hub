@@ -80,6 +80,12 @@
     user-select: none;
     -webkit-tap-highlight-color: transparent;
     -webkit-touch-callout: none;
+    touch-action: manipulation;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  button, a, input, [role="button"] {
+    touch-action: manipulation;
   }
 
   input, textarea {
@@ -90,6 +96,20 @@
   ::-webkit-scrollbar {
     width: 0px;
     background: transparent;
+  }
+
+  .overflow-y-auto {
+    -webkit-overflow-scrolling: touch;
+    scroll-behavior: smooth;
+  }
+
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .animate-fade-in {
+    animation: fade-in 0.2s ease-out;
   }
 }
 
