@@ -1,21 +1,17 @@
-import Dexie, { type Table } from 'dexie';
-
-export interface LocalTransaction {
-  id: string; // UUID
-  amount: string; // Stored as string to preserve precision
-  description: string;
-  status: 'pending' | 'synced';
-  syncedAt?: Date; // Optional, set when synced
-  createdAt: Date;
-}
+import Dexie, { type Table } from "dexie";
+import type { Member, Business, OfflineTransaction } from "./types";
 
 export class KioskDatabase extends Dexie {
-  transactions!: Table<LocalTransaction>;
+  members!: Table<Member>;
+  businesses!: Table<Business>;
+  offlineTransactions!: Table<OfflineTransaction>;
 
   constructor() {
-    super('kiosk_db');
-    this.version(1).stores({
-      transactions: 'id, status, createdAt' // Indexes
+    super("kiosk_db");
+    this.version(2).stores({
+      members: "id, member_code, last_name, is_active",
+      businesses: "id, name, is_active",
+      offlineTransactions: "id, status, createdAt",
     });
   }
 }
