@@ -11,6 +11,7 @@ import { IdleOverlay } from "@/components/kiosk/idle-overlay";
 import { ProfileDrawer } from "@/components/kiosk/profile-drawer";
 import { KioskMessagePopup } from "@/components/kiosk/kiosk-message-popup";
 import type { Member, Business } from "@/lib/types";
+import { useNetworkStatus } from "@/hooks/use-network-status";
 import {
   ChevronLeft,
   AlertTriangle,
@@ -19,24 +20,6 @@ import {
   CloudOff,
   RefreshCw,
 } from "lucide-react";
-
-function useNetworkStatus() {
-  const [isOnline, setIsOnline] = useState(true);
-
-  useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
-    setIsOnline(navigator.onLine);
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
-    return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
-    };
-  }, []);
-
-  return { isOnline };
-}
 
 type KioskStep =
   | "member"
@@ -51,9 +34,16 @@ const IDLE_TIMEOUT = 45000;
 
 export default function KioskPage() {
   const { members, businesses, isLoading: dataLoading, refresh, isError } = useKioskData();
-  const { isOnline } = useNetworkStatus();
+  const { isOnline, onReconnect } = useNetworkStatus();
   const { pendingCount, isSyncing, queueTransaction, syncAll } =
-    useOfflineQueue();
+    useOfflineQueue(onReconnect);
+
+  useEffect(() => {
+    return onReconnect(() => {
+      console.log("[kiosk] Reconnected - refreshing member/business data");
+      refresh();
+    });
+  }, [onReconnect, refresh]);
 
   const [step, setStep] = useState<KioskStep>("member");
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);

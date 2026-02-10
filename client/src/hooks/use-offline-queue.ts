@@ -4,7 +4,7 @@ import { supabase } from "@/lib/supabase";
 import type { OfflineTransaction } from "@/lib/types";
 import { nanoid } from "nanoid";
 
-export function useOfflineQueue() {
+export function useOfflineQueue(onReconnect?: (cb: () => void) => () => void) {
   const [pendingCount, setPendingCount] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
   const syncingRef = useRef(false);
@@ -134,11 +134,33 @@ export function useOfflineQueue() {
   }, [refreshCount]);
 
   useEffect(() => {
+    if (onReconnect) {
+      return onReconnect(() => {
+        console.log("[sync] Reconnected - auto-syncing pending transactions");
+        setTimeout(() => syncAll(), 2000);
+      });
+    }
+
     const handleOnline = () => {
       setTimeout(() => syncAll(), 3000);
     };
     window.addEventListener("online", handleOnline);
     return () => window.removeEventListener("online", handleOnline);
+  }, [syncAll, onReconnect]);
+
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        console.log("[sync] App became visible - checking for pending transactions");
+        setTimeout(() => syncAll(), 1000);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [syncAll]);
+
+  useEffect(() => {
+    syncAll();
   }, [syncAll]);
 
   return { pendingCount, isSyncing, queueTransaction, syncAll };
