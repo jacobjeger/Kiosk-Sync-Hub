@@ -12,8 +12,8 @@ export function useKioskData() {
   const loadFromLocal = useCallback(async () => {
     const localMembers = await db.members.toArray();
     const localBusinesses = await db.businesses.toArray();
-    if (localMembers.length > 0) setMembers(localMembers);
-    if (localBusinesses.length > 0) setBusinesses(localBusinesses);
+    setMembers(localMembers);
+    setBusinesses(localBusinesses);
     return { localMembers, localBusinesses };
   }, []);
 
@@ -59,9 +59,14 @@ export function useKioskData() {
   useEffect(() => {
     async function init() {
       setIsLoading(true);
-      await loadFromLocal();
-      await fetchFromSupabase();
+      try {
+        await loadFromLocal();
+      } catch (err) {
+        console.error("[kiosk] Failed to load local data:", err);
+      }
       setIsLoading(false);
+
+      fetchFromSupabase();
     }
     init();
 

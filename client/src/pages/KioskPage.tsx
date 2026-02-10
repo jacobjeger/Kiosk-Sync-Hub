@@ -50,7 +50,7 @@ type KioskStep =
 const IDLE_TIMEOUT = 45000;
 
 export default function KioskPage() {
-  const { members, businesses, refresh, isError } = useKioskData();
+  const { members, businesses, isLoading: dataLoading, refresh, isError } = useKioskData();
   const { isOnline } = useNetworkStatus();
   const { pendingCount, isSyncing, queueTransaction, syncAll } =
     useOfflineQueue();
@@ -173,7 +173,7 @@ export default function KioskPage() {
     setStep("success");
   };
 
-  if (members.length === 0) {
+  if (dataLoading) {
     return (
       <div className="min-h-screen bg-stone-50 flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
