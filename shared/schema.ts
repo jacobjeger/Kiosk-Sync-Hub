@@ -1,22 +1,18 @@
-import { pgTable, text, timestamp, numeric, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, numeric } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-// We define the schema here for type sharing, even though we use Dexie (Local) and Supabase (Remote)
-// This roughly matches what we expect in Supabase and IndexedDB
-
+// This schema reflects the existing Supabase table structure
+// Note: We only use this for typing; we do NOT perform migrations (no db:push)
 export const transactions = pgTable("transactions", {
-  id: text("id").primaryKey(), // UUID
+  id: text("id").primaryKey(), 
   amount: numeric("amount").notNull(),
   description: text("description"),
-  status: text("status").notNull().default('pending'), // 'pending' | 'synced'
-  syncedAt: timestamp("synced_at"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+  created_at: timestamp("created_at").defaultNow().notNull(),
 });
 
 export const insertTransactionSchema = createInsertSchema(transactions).omit({ 
-  createdAt: true,
-  syncedAt: true 
+  created_at: true 
 });
 
 export type Transaction = typeof transactions.$inferSelect;
