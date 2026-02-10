@@ -29,26 +29,29 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const { request } = event;
 
-  if (request.url.includes("supabase.co")) {
-    event.respondWith(
-      fetch(request).catch(() => new Response("{}", { status: 503 }))
-    );
-    return;
-  }
+  if (request.method !== "GET") return;
+
+  if (request.url.includes("supabase.co")) return;
+
+  if (request.url.includes("fonts.googleapis.com") || request.url.includes("fonts.gstatic.com")) return;
+
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin) return;
 
   event.respondWith(
-    caches.match(request).then((cached) => {
-      const fetched = fetch(request)
-        .then((response) => {
-          if (response.ok) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-          }
-          return response;
-        })
-        .catch(() => cached);
+    caches.open(CACHE_NAME).then((cache) =>
+      cache.match(request).then((cached) => {
+        const networkFetch = fetch(request)
+          .then((response) => {
+            if (response.ok) {
+              cache.put(request, response.clone());
+            }
+            return response;
+          })
+          .catch(() => cached || new Response("Offline", { status: 503 }));
 
-      return cached || fetched;
-    })
+        return cached || networkFetch;
+      })
+    )
   );
 });

@@ -4,7 +4,7 @@
   "description": "Payment kiosk for PDCA member transactions",
   "start_url": "/",
   "display": "fullscreen",
-  "orientation": "portrait",
+  "orientation": "any",
   "background_color": "#fafaf9",
   "theme_color": "#1c1917",
   "categories": ["finance", "business"],
