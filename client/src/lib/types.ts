@@ -30,6 +30,16 @@ export interface Member {
   updated_at: string;
 }
 
+export interface CoffeeTally {
+  id: string;
+  memberId: string;
+  memberName: string;
+  count: number;
+  status: "pending" | "synced" | "failed";
+  createdAt: Date;
+  syncedAt?: Date;
+}
+
 export interface OfflineTransaction {
   id: string;
   memberId: string;

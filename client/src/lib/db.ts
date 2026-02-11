@@ -12,6 +12,7 @@ export class KioskDatabase extends Dexie {
   businesses!: Table<Business>;
   offlineTransactions!: Table<OfflineTransaction>;
   favoritesCache!: Table<FavoritesCache>;
+  coffeeTallies!: Table<CoffeeTally>;
 
   constructor() {
     super("kiosk_db");
@@ -25,6 +26,13 @@ export class KioskDatabase extends Dexie {
       businesses: "id, name, is_active",
       offlineTransactions: "id, status, createdAt",
       favoritesCache: "memberId",
+    });
+    this.version(4).stores({
+      members: "id, member_code, last_name, is_active",
+      businesses: "id, name, is_active",
+      offlineTransactions: "id, status, createdAt",
+      favoritesCache: "memberId",
+      coffeeTallies: "id, memberId, createdAt, status",
     });
   }
 }
