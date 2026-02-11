@@ -1,25 +1,29 @@
 import { useState, useEffect } from "react";
-import { Coffee, CheckCircle2, X, BarChart3, Loader2 } from "lucide-react";
+import { Coffee, CheckCircle2, X, Loader2, BarChart3, ChevronLeft } from "lucide-react";
 import { db } from "@/lib/db";
-import type { Member, CoffeeTally } from "@/lib/types";
+import type { CoffeeTally } from "@/lib/types";
 import { nanoid } from "nanoid";
 import { startOfDay, startOfWeek, startOfMonth, isAfter } from "date-fns";
 
 interface KollelCoffeeTallyProps {
   onClose: () => void;
-  members: Member[];
 }
 
-export function KollelCoffeeTally({ onClose, members }: KollelCoffeeTallyProps) {
+export function KollelCoffeeTally({ onClose }: KollelCoffeeTallyProps) {
   const [step, setStep] = useState<"select" | "confirm" | "stats">("select");
-  const [selectedMember, setSelectedMember] = useState<Member | null>(null);
-  const [stats, setStats] = useState({ today: 0, week: 0, month: 0 });
+  const [selectedType, setSelectedType] = useState<"small" | "large" | null>(null);
+  const [stats, setStats] = useState({
+    small: { today: 0, week: 0, month: 0 },
+    large: { today: 0, week: 0, month: 0 }
+  });
   const [isLogging, setIsLogging] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
 
   useEffect(() => {
-    loadStats();
-  }, []);
+    if (step === "stats" || step === "select") {
+      loadStats();
+    }
+  }, [step]);
 
   const loadStats = async () => {
     const allTallies = await db.coffeeTallies.toArray();
@@ -28,21 +32,28 @@ export function KollelCoffeeTally({ onClose, members }: KollelCoffeeTallyProps) 
     const week = startOfWeek(now);
     const month = startOfMonth(now);
 
+    const getStatsForType = (type: "small" | "large") => {
+      const typeTallies = allTallies.filter(t => t.type === type);
+      return {
+        today: typeTallies.filter(t => isAfter(new Date(t.createdAt), today)).length,
+        week: typeTallies.filter(t => isAfter(new Date(t.createdAt), week)).length,
+        month: typeTallies.filter(t => isAfter(new Date(t.createdAt), month)).length,
+      };
+    };
+
     setStats({
-      today: allTallies.filter(t => isAfter(new Date(t.createdAt), today)).length,
-      week: allTallies.filter(t => isAfter(new Date(t.createdAt), week)).length,
-      month: allTallies.filter(t => isAfter(new Date(t.createdAt), month)).length,
+      small: getStatsForType("small"),
+      large: getStatsForType("large")
     });
   };
 
   const handleLogCoffee = async () => {
-    if (!selectedMember) return;
+    if (!selectedType) return;
     setIsLogging(true);
     
     const tally: CoffeeTally = {
       id: nanoid(),
-      memberId: selectedMember.id,
-      memberName: `${selectedMember.first_name} ${selectedMember.last_name}`,
+      type: selectedType,
       count: 1,
       status: "pending",
       createdAt: new Date(),
@@ -61,6 +72,14 @@ export function KollelCoffeeTally({ onClose, members }: KollelCoffeeTallyProps) 
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
         <div className="p-4 border-b border-stone-100 flex items-center justify-between bg-stone-50">
           <div className="flex items-center gap-2">
+            {step !== "select" && !showSuccess && (
+              <button 
+                onClick={() => setStep("select")}
+                className="p-1 -ml-1 hover:bg-stone-200 rounded-full transition-colors"
+              >
+                <ChevronLeft className="w-5 h-5 text-stone-600" />
+              </button>
+            )}
             <div className="w-8 h-8 rounded-full bg-stone-900 flex items-center justify-center">
               <Coffee className="w-4 h-4 text-white" />
             </div>
@@ -78,56 +97,98 @@ export function KollelCoffeeTally({ onClose, members }: KollelCoffeeTallyProps) 
                 <CheckCircle2 className="w-8 h-8 text-emerald-600" />
               </div>
               <h4 className="text-xl font-bold text-stone-900 mb-1">Coffee Logged!</h4>
-              <p className="text-stone-500 text-sm">Enjoy your learning</p>
+              <p className="text-stone-500 text-sm uppercase font-bold tracking-widest">{selectedType} cup</p>
             </div>
           ) : step === "select" ? (
-            <div className="space-y-4">
-              <div className="grid grid-cols-3 gap-3">
-                <div className="bg-stone-50 p-3 rounded-xl text-center border border-stone-100">
-                  <p className="text-[10px] uppercase tracking-wider font-bold text-stone-400 mb-1">Today</p>
-                  <p className="text-xl font-black text-stone-900">{stats.today}</p>
-                </div>
-                <div className="bg-stone-50 p-3 rounded-xl text-center border border-stone-100">
-                  <p className="text-[10px] uppercase tracking-wider font-bold text-stone-400 mb-1">Week</p>
-                  <p className="text-xl font-black text-stone-900">{stats.week}</p>
-                </div>
-                <div className="bg-stone-50 p-3 rounded-xl text-center border border-stone-100">
-                  <p className="text-[10px] uppercase tracking-wider font-bold text-stone-400 mb-1">Month</p>
-                  <p className="text-xl font-black text-stone-900">{stats.month}</p>
+            <div className="space-y-6">
+              <div className="grid grid-cols-2 gap-4">
+                <button
+                  onClick={() => {
+                    setSelectedType("small");
+                    setStep("confirm");
+                  }}
+                  className="flex flex-col items-center justify-center p-8 rounded-2xl border-2 border-stone-100 hover:border-stone-900 hover:bg-stone-50 transition-all group"
+                >
+                  <Coffee className="w-10 h-10 text-stone-400 group-hover:text-stone-900 mb-2 transition-colors" />
+                  <span className="font-bold text-stone-900">Small Cup</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setSelectedType("large");
+                    setStep("confirm");
+                  }}
+                  className="flex flex-col items-center justify-center p-8 rounded-2xl border-2 border-stone-100 hover:border-stone-900 hover:bg-stone-50 transition-all group"
+                >
+                  <Coffee className="w-14 h-14 text-stone-400 group-hover:text-stone-900 mb-2 transition-colors" />
+                  <span className="font-bold text-stone-900">Large Cup</span>
+                </button>
+              </div>
+
+              <button
+                onClick={() => setStep("stats")}
+                className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-stone-50 border border-stone-200 text-stone-600 font-bold text-sm hover:bg-stone-100 transition-colors"
+              >
+                <BarChart3 className="w-4 h-4" />
+                View Coffee Stats
+              </button>
+            </div>
+          ) : step === "stats" ? (
+            <div className="space-y-6">
+              <div className="space-y-3">
+                <h4 className="text-xs font-black text-stone-400 uppercase tracking-widest flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-stone-900" /> Small Cup Tallies
+                </h4>
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="bg-stone-50 p-3 rounded-xl text-center border border-stone-100">
+                    <p className="text-[10px] uppercase font-bold text-stone-400 mb-1">Today</p>
+                    <p className="text-lg font-black text-stone-900">{stats.small.today}</p>
+                  </div>
+                  <div className="bg-stone-50 p-3 rounded-xl text-center border border-stone-100">
+                    <p className="text-[10px] uppercase font-bold text-stone-400 mb-1">Week</p>
+                    <p className="text-lg font-black text-stone-900">{stats.small.week}</p>
+                  </div>
+                  <div className="bg-stone-50 p-3 rounded-xl text-center border border-stone-100">
+                    <p className="text-[10px] uppercase font-bold text-stone-400 mb-1">Month</p>
+                    <p className="text-lg font-black text-stone-900">{stats.small.month}</p>
+                  </div>
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-stone-500 uppercase tracking-wider">Select Learner</label>
-                <div className="max-h-[300px] overflow-y-auto pr-1 -mr-1 space-y-1">
-                  {members.map(member => (
-                    <button
-                      key={member.id}
-                      onClick={() => {
-                        setSelectedMember(member);
-                        setStep("confirm");
-                      }}
-                      className="w-full p-3 flex items-center gap-3 rounded-xl border border-stone-100 hover:border-stone-200 hover:bg-stone-50 transition-all text-left group"
-                    >
-                      <div className="w-8 h-8 rounded-full bg-stone-100 flex items-center justify-center text-stone-600 font-bold text-xs group-hover:bg-stone-900 group-hover:text-white transition-colors">
-                        {member.first_name[0]}{member.last_name[0]}
-                      </div>
-                      <span className="font-semibold text-stone-900 text-sm">
-                        {member.first_name} {member.last_name}
-                      </span>
-                    </button>
-                  ))}
+              <div className="space-y-3">
+                <h4 className="text-xs font-black text-stone-400 uppercase tracking-widest flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-stone-900" /> Large Cup Tallies
+                </h4>
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="bg-stone-50 p-3 rounded-xl text-center border border-stone-100">
+                    <p className="text-[10px] uppercase font-bold text-stone-400 mb-1">Today</p>
+                    <p className="text-lg font-black text-stone-900">{stats.large.today}</p>
+                  </div>
+                  <div className="bg-stone-50 p-3 rounded-xl text-center border border-stone-100">
+                    <p className="text-[10px] uppercase font-bold text-stone-400 mb-1">Week</p>
+                    <p className="text-lg font-black text-stone-900">{stats.large.week}</p>
+                  </div>
+                  <div className="bg-stone-50 p-3 rounded-xl text-center border border-stone-100">
+                    <p className="text-[10px] uppercase font-bold text-stone-400 mb-1">Month</p>
+                    <p className="text-lg font-black text-stone-900">{stats.large.month}</p>
+                  </div>
                 </div>
               </div>
+
+              <button
+                onClick={() => setStep("select")}
+                className="w-full py-3 rounded-xl bg-stone-900 text-white font-bold text-sm shadow-lg shadow-stone-900/10 active:scale-95 transition-all"
+              >
+                Back to Selection
+              </button>
             </div>
           ) : (
             <div className="flex flex-col items-center text-center py-4">
               <div className="w-12 h-12 bg-amber-50 rounded-full flex items-center justify-center mb-4">
-                <Coffee className="w-6 h-6 text-amber-600" />
+                <Coffee className={`text-amber-600 ${selectedType === 'large' ? 'w-8 h-8' : 'w-6 h-6'}`} />
               </div>
               <h4 className="text-lg font-bold text-stone-900 mb-2">Confirm Coffee Log</h4>
               <p className="text-stone-500 text-sm mb-8 leading-relaxed">
-                Log 1 coffee for <span className="text-stone-900 font-bold">{selectedMember?.first_name} {selectedMember?.last_name}</span>?
+                Log 1 <span className="text-stone-900 font-bold uppercase tracking-widest">{selectedType}</span> coffee?
               </p>
               
               <div className="grid grid-cols-2 gap-3 w-full">

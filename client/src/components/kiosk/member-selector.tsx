@@ -1,6 +1,7 @@
 import { useState, useRef, useMemo, memo } from "react";
-import { Search } from "lucide-react";
+import { Search, Coffee } from "lucide-react";
 import type { Member } from "@/lib/types";
+import { KollelCoffeeTally } from "./kollel-coffee";
 
 interface MemberSelectorProps {
   members: Member[];
@@ -33,6 +34,7 @@ const MemberButton = memo(function MemberButton({
 
 export function MemberSelector({ members, onSelect }: MemberSelectorProps) {
   const [search, setSearch] = useState("");
+  const [showKollel, setShowKollel] = useState(false);
   const letterRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const filteredMembers = useMemo(() => {
@@ -71,12 +73,30 @@ export function MemberSelector({ members, onSelect }: MemberSelectorProps) {
 
   return (
     <div className="flex flex-col h-full relative">
-      <div className="text-center mb-4 flex-shrink-0">
-        <h2 className="text-lg font-semibold text-stone-900">
-          Select Your Name
-        </h2>
-        <p className="text-stone-500 text-xs">Tap to continue</p>
+      <div className="flex items-center justify-center relative mb-4 flex-shrink-0">
+        <div className="text-center">
+          <h2 className="text-lg font-semibold text-stone-900">
+            Select Your Name
+          </h2>
+          <p className="text-stone-500 text-xs">Tap to continue</p>
+        </div>
+        
+        <button
+          onClick={() => setShowKollel(true)}
+          className="absolute right-0 top-0 flex flex-col items-center gap-0.5 group"
+        >
+          <div className="w-8 h-8 rounded-lg bg-stone-900 flex items-center justify-center shadow-lg shadow-stone-900/10 group-active:scale-90 transition-transform">
+            <Coffee className="w-4 h-4 text-white" />
+          </div>
+          <span className="text-[8px] font-bold text-stone-400 uppercase tracking-tighter">Kollel</span>
+        </button>
       </div>
+
+      {showKollel && (
+        <KollelCoffeeTally 
+          onClose={() => setShowKollel(false)} 
+        />
+      )}
 
       <div className="mb-4 flex-shrink-0">
         <div className="relative flex-1">

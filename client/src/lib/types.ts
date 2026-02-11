@@ -32,8 +32,7 @@ export interface Member {
 
 export interface CoffeeTally {
   id: string;
-  memberId: string;
-  memberName: string;
+  type: "small" | "large";
   count: number;
   status: "pending" | "synced" | "failed";
   createdAt: Date;
