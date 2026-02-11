@@ -288,15 +288,6 @@ export function AmountSelector({
         </div>
       )}
 
-      {!isOnline && (
-        <div className="mb-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 flex items-center gap-2">
-          <WifiOff className="w-3.5 h-3.5 text-amber-600" />
-          <p className="text-[11px] text-amber-700 font-medium">
-            Offline - transaction will sync later
-          </p>
-        </div>
-      )}
-
       {activeTab === "preset" ? (
         <div className="grid grid-cols-3 gap-1.5">
           {presetAmounts.map((amount) => {
