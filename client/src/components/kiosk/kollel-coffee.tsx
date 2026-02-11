@@ -27,25 +27,54 @@ export function KollelCoffeeTally({ onClose }: KollelCoffeeTallyProps) {
   }, [step]);
 
   const loadStats = async () => {
-    const allTallies = await db.coffeeTallies.toArray();
     const now = new Date();
-    const today = startOfDay(now);
-    const week = startOfWeek(now);
-    const month = startOfMonth(now);
+    const today = startOfDay(now).toISOString();
+    const week = startOfWeek(now).toISOString();
+    const month = startOfMonth(now).toISOString();
 
-    const getStatsForType = (type: "small" | "large") => {
-      const typeTallies = allTallies.filter(t => t.type === type);
-      return {
-        today: typeTallies.filter(t => isAfter(new Date(t.createdAt), today)).length,
-        week: typeTallies.filter(t => isAfter(new Date(t.createdAt), week)).length,
-        month: typeTallies.filter(t => isAfter(new Date(t.createdAt), month)).length,
+    try {
+      const [
+        { count: smallToday },
+        { count: smallWeek },
+        { count: smallMonth },
+        { count: largeToday },
+        { count: largeWeek },
+        { count: largeMonth },
+      ] = await Promise.all([
+        supabase.from("coffee_tallies").select("*", { count: "exact", head: true }).eq("type", "small").gte("created_at", today),
+        supabase.from("coffee_tallies").select("*", { count: "exact", head: true }).eq("type", "small").gte("created_at", week),
+        supabase.from("coffee_tallies").select("*", { count: "exact", head: true }).eq("type", "small").gte("created_at", month),
+        supabase.from("coffee_tallies").select("*", { count: "exact", head: true }).eq("type", "large").gte("created_at", today),
+        supabase.from("coffee_tallies").select("*", { count: "exact", head: true }).eq("type", "large").gte("created_at", week),
+        supabase.from("coffee_tallies").select("*", { count: "exact", head: true }).eq("type", "large").gte("created_at", month),
+      ]);
+
+      setStats({
+        small: { today: smallToday ?? 0, week: smallWeek ?? 0, month: smallMonth ?? 0 },
+        large: { today: largeToday ?? 0, week: largeWeek ?? 0, month: largeMonth ?? 0 },
+      });
+      console.log("[kollel] Stats loaded from Supabase");
+    } catch {
+      const allTallies = await db.coffeeTallies.toArray();
+      const todayDate = startOfDay(now);
+      const weekDate = startOfWeek(now);
+      const monthDate = startOfMonth(now);
+
+      const getStatsForType = (type: "small" | "large") => {
+        const typeTallies = allTallies.filter(t => t.type === type);
+        return {
+          today: typeTallies.filter(t => isAfter(new Date(t.createdAt), todayDate)).length,
+          week: typeTallies.filter(t => isAfter(new Date(t.createdAt), weekDate)).length,
+          month: typeTallies.filter(t => isAfter(new Date(t.createdAt), monthDate)).length,
+        };
       };
-    };
 
-    setStats({
-      small: getStatsForType("small"),
-      large: getStatsForType("large")
-    });
+      setStats({
+        small: getStatsForType("small"),
+        large: getStatsForType("large"),
+      });
+      console.log("[kollel] Stats loaded from local DB (offline fallback)");
+    }
   };
 
   const handleLogCoffee = async () => {
