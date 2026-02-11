@@ -31,6 +31,7 @@ type KioskStep =
   | "disabled";
 
 const IDLE_TIMEOUT = 45000;
+const PIN_IDLE_TIMEOUT = 10000;
 
 export default function KioskPage() {
   const { members, businesses, isLoading: dataLoading, refresh, isError } = useKioskData();
@@ -80,9 +81,17 @@ export default function KioskPage() {
   useEffect(() => {
     if (!selectedMember || step === "member" || step === "success") return;
 
+    const timeout = step === "pin" ? PIN_IDLE_TIMEOUT : IDLE_TIMEOUT;
+
     let idleTimer: ReturnType<typeof setTimeout>;
     const startIdleTimer = () => {
-      idleTimer = setTimeout(() => setShowIdleWarning(true), IDLE_TIMEOUT);
+      idleTimer = setTimeout(() => {
+        if (step === "pin") {
+          handleReset();
+        } else {
+          setShowIdleWarning(true);
+        }
+      }, timeout);
     };
     const handleActivity = () => {
       clearTimeout(idleTimer);
@@ -99,7 +108,7 @@ export default function KioskPage() {
       window.removeEventListener("mousedown", handleActivity);
       window.removeEventListener("keydown", handleActivity);
     };
-  }, [step, selectedMember, resetIdleTimer]);
+  }, [step, selectedMember, resetIdleTimer, handleReset]);
 
   useEffect(() => {
     if (!showIdleWarning) return;

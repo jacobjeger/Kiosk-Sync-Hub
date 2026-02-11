@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, memo, useCallback } from "react";
 import { Search, Store, Coffee, ShoppingBag, UtensilsCrossed } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import type { Business, Member } from "@/lib/types";
 
 interface BusinessSelectorProps {
@@ -63,21 +64,21 @@ export function BusinessSelector({
   useEffect(() => {
     async function loadTopBusinesses() {
       try {
-        const cacheKey = `favorites_${member.id}`;
-        const cachedData = localStorage.getItem(cacheKey);
+        const cached = await db.favoritesCache.get(member.id);
 
-        if (cachedData) {
-          const { businesses: cached, timestamp } = JSON.parse(cachedData);
-          const ageInHours = (Date.now() - timestamp) / (1000 * 60 * 60);
+        if (cached) {
+          const ageInHours = (Date.now() - cached.timestamp) / (1000 * 60 * 60);
+          setTopBusinesses(cached.businessIds);
+          setIsLoadingFavorites(false);
 
           if (ageInHours < 24) {
-            setTopBusinesses(cached);
-            setIsLoadingFavorites(false);
             return;
           }
         }
 
-        setIsLoadingFavorites(true);
+        if (!cached) {
+          setIsLoadingFavorites(true);
+        }
 
         const { data, error } = await supabase
           .from("transactions")
@@ -105,13 +106,11 @@ export function BusinessSelector({
             .slice(0, 4)
             .map(([businessId]) => businessId);
 
-          localStorage.setItem(
-            cacheKey,
-            JSON.stringify({
-              businesses: sortedBusinesses,
-              timestamp: Date.now(),
-            })
-          );
+          await db.favoritesCache.put({
+            memberId: member.id,
+            businessIds: sortedBusinesses,
+            timestamp: Date.now(),
+          });
 
           setTopBusinesses(sortedBusinesses);
         }
