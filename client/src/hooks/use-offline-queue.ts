@@ -137,12 +137,12 @@ export function useOfflineQueue(onReconnect?: (cb: () => void) => () => void) {
     if (onReconnect) {
       return onReconnect(() => {
         console.log("[sync] Reconnected - auto-syncing pending transactions");
-        setTimeout(() => syncAll(), 2000);
+        setTimeout(() => { syncAll(); syncCoffeeTallies(); }, 2000);
       });
     }
 
     const handleOnline = () => {
-      setTimeout(() => syncAll(), 3000);
+      setTimeout(() => { syncAll(); syncCoffeeTallies(); }, 3000);
     };
     window.addEventListener("online", handleOnline);
     return () => window.removeEventListener("online", handleOnline);
@@ -152,16 +152,48 @@ export function useOfflineQueue(onReconnect?: (cb: () => void) => () => void) {
     const handleVisibility = () => {
       if (document.visibilityState === "visible") {
         console.log("[sync] App became visible - checking for pending transactions");
-        setTimeout(() => syncAll(), 1000);
+        setTimeout(() => { syncAll(); syncCoffeeTallies(); }, 1000);
       }
     };
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, [syncAll]);
 
+  const syncCoffeeTallies = useCallback(async () => {
+    try {
+      const pending = await db.coffeeTallies
+        .where("status")
+        .equals("pending")
+        .toArray();
+
+      if (pending.length === 0) return;
+
+      for (const tally of pending) {
+        try {
+          const { error } = await supabase.from("coffee_tallies").insert({
+            type: tally.type,
+            count: tally.count,
+            created_at: new Date(tally.createdAt).toISOString(),
+            synced_from_device: true,
+          });
+          if (!error) {
+            await db.coffeeTallies.update(tally.id, { status: "synced", syncedAt: new Date() });
+            console.log("[sync] Coffee tally synced:", tally.id);
+          }
+        } catch (err) {
+          console.warn("[sync] Failed to sync coffee tally:", tally.id, err);
+          break;
+        }
+      }
+    } catch (err) {
+      console.warn("[sync] Error syncing coffee tallies:", err);
+    }
+  }, []);
+
   useEffect(() => {
     syncAll();
-  }, [syncAll]);
+    syncCoffeeTallies();
+  }, [syncAll, syncCoffeeTallies]);
 
-  return { pendingCount, isSyncing, queueTransaction, syncAll };
+  return { pendingCount, isSyncing, queueTransaction, syncAll, syncCoffeeTallies };
 }

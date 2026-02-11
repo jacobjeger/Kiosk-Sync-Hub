@@ -1,5 +1,5 @@
 import Dexie, { type Table } from "dexie";
-import type { Member, Business, OfflineTransaction } from "./types";
+import type { Member, Business, OfflineTransaction, CoffeeTally } from "./types";
 
 export interface FavoritesCache {
   memberId: string;

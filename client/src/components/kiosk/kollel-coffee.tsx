@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Coffee, CheckCircle2, X, Loader2, BarChart3, ChevronLeft } from "lucide-react";
 import { db } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 import type { CoffeeTally } from "@/lib/types";
 import { nanoid } from "nanoid";
 import { startOfDay, startOfWeek, startOfMonth, isAfter } from "date-fns";
@@ -60,6 +61,24 @@ export function KollelCoffeeTally({ onClose }: KollelCoffeeTallyProps) {
     };
 
     await db.coffeeTallies.add(tally);
+    
+    try {
+      const { error } = await supabase.from("coffee_tallies").insert({
+        type: selectedType,
+        count: 1,
+        created_at: tally.createdAt.toISOString(),
+        synced_from_device: true,
+      });
+      if (!error) {
+        await db.coffeeTallies.update(tally.id, { status: "synced", syncedAt: new Date() });
+        console.log("[kollel] Coffee tally synced to Supabase");
+      } else {
+        console.warn("[kollel] Supabase insert failed, will retry later:", error.message);
+      }
+    } catch (err) {
+      console.warn("[kollel] Network error syncing coffee tally, stored locally:", err);
+    }
+
     setIsLogging(false);
     setShowSuccess(true);
     setTimeout(() => {
