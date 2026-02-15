@@ -62,8 +62,10 @@ export function KollelCoffeeTally({ onClose }: KollelCoffeeTallyProps) {
 
       const buildQuery = (type: string, dateFilter?: string) => {
         let q = supabase.from("coffee_tallies").select("*", { count: "exact", head: true }).eq("type", type);
-        if (resetCutoff) q = q.gte("created_at", resetCutoff);
-        if (dateFilter) q = q.gte("created_at", dateFilter);
+        const cutoff = resetCutoff && dateFilter
+          ? (resetCutoff > dateFilter ? resetCutoff : dateFilter)
+          : (dateFilter || resetCutoff);
+        if (cutoff) q = q.gte("created_at", cutoff);
         return q;
       };
 
