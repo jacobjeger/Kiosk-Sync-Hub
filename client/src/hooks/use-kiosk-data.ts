@@ -36,8 +36,15 @@ export function useKioskData() {
 
       let fetchedBusinesses: Business[];
       if (businessesRes.error) {
-        if (businessesRes.error.code === "42703") {
-          console.warn("[kiosk] icon_url column not found, fetching without it");
+        const errMsg = businessesRes.error.message || "";
+        const errCode = businessesRes.error.code || "";
+        const isColumnMissing =
+          errCode === "42703" ||
+          errCode === "PGRST204" ||
+          errMsg.includes("icon_url") ||
+          errMsg.includes("does not exist");
+        if (isColumnMissing) {
+          console.warn("[kiosk] icon_url column not found, fetching without it. Add icon_url TEXT column to businesses table in Supabase.");
           const fallback = await supabase
             .from("businesses")
             .select("id, name, description, category, is_active, preset_amounts, fee_percentage, created_at, updated_at")
