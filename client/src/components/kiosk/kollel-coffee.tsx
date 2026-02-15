@@ -158,6 +158,7 @@ export function KollelCoffeeTally({ onClose }: KollelCoffeeTallyProps) {
 
     setIsLogging(false);
     setShowSuccess(true);
+    loadStats();
     setTimeout(() => {
       onClose();
     }, 2000);
@@ -210,6 +211,7 @@ export function KollelCoffeeTally({ onClose }: KollelCoffeeTallyProps) {
     setIsResetting(false);
     setResetDone(true);
     setResetPin("");
+    loadStats();
     setTimeout(() => {
       setResetDone(false);
       setStep("stats");
