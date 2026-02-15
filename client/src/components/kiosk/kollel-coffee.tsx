@@ -229,8 +229,8 @@ export function KollelCoffeeTally({ onClose }: KollelCoffeeTallyProps) {
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
-        <div className="p-4 border-b border-stone-100 flex items-center justify-between bg-stone-50">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in duration-200">
+        <div className="p-4 border-b border-stone-100 flex items-center justify-between bg-stone-50 shrink-0">
           <div className="flex items-center gap-2">
             {step !== "select" && !showSuccess && !resetDone && (
               <button 
@@ -250,7 +250,7 @@ export function KollelCoffeeTally({ onClose }: KollelCoffeeTallyProps) {
           </button>
         </div>
 
-        <div className="p-6">
+        <div className="p-6 overflow-y-auto">
           {showSuccess ? (
             <div className="flex flex-col items-center justify-center py-8 text-center animate-in fade-in scale-in duration-300">
               <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mb-4">
@@ -301,51 +301,51 @@ export function KollelCoffeeTally({ onClose }: KollelCoffeeTallyProps) {
               </button>
             </div>
           ) : step === "stats" ? (
-            <div className="space-y-6">
-              <div className="space-y-3">
+            <div className="space-y-4">
+              <div className="space-y-2">
                 <h4 className="text-xs font-black text-stone-400 uppercase tracking-widest flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full bg-stone-900" /> Small Cup Tallies
                 </h4>
-                <div className="grid grid-cols-4 gap-2">
-                  <div className="bg-stone-50 p-3 rounded-xl text-center border border-stone-100">
-                    <p className="text-[10px] uppercase font-bold text-stone-400 mb-1">Today</p>
-                    <p className="text-lg font-black text-stone-900">{stats.small.today}</p>
+                <div className="grid grid-cols-4 gap-1.5">
+                  <div className="bg-stone-50 p-2 rounded-lg text-center border border-stone-100">
+                    <p className="text-[10px] uppercase font-bold text-stone-400 mb-0.5">Today</p>
+                    <p className="text-base font-black text-stone-900">{stats.small.today}</p>
                   </div>
-                  <div className="bg-stone-50 p-3 rounded-xl text-center border border-stone-100">
-                    <p className="text-[10px] uppercase font-bold text-stone-400 mb-1">Week</p>
-                    <p className="text-lg font-black text-stone-900">{stats.small.week}</p>
+                  <div className="bg-stone-50 p-2 rounded-lg text-center border border-stone-100">
+                    <p className="text-[10px] uppercase font-bold text-stone-400 mb-0.5">Week</p>
+                    <p className="text-base font-black text-stone-900">{stats.small.week}</p>
                   </div>
-                  <div className="bg-stone-50 p-3 rounded-xl text-center border border-stone-100">
-                    <p className="text-[10px] uppercase font-bold text-stone-400 mb-1">Month</p>
-                    <p className="text-lg font-black text-stone-900">{stats.small.month}</p>
+                  <div className="bg-stone-50 p-2 rounded-lg text-center border border-stone-100">
+                    <p className="text-[10px] uppercase font-bold text-stone-400 mb-0.5">Month</p>
+                    <p className="text-base font-black text-stone-900">{stats.small.month}</p>
                   </div>
-                  <div className="bg-stone-900 p-3 rounded-xl text-center">
-                    <p className="text-[10px] uppercase font-bold text-stone-400 mb-1">Total</p>
-                    <p className="text-lg font-black text-white">{stats.small.total}</p>
+                  <div className="bg-stone-900 p-2 rounded-lg text-center">
+                    <p className="text-[10px] uppercase font-bold text-stone-400 mb-0.5">Total</p>
+                    <p className="text-base font-black text-white">{stats.small.total}</p>
                   </div>
                 </div>
               </div>
 
-              <div className="space-y-3">
+              <div className="space-y-2">
                 <h4 className="text-xs font-black text-stone-400 uppercase tracking-widest flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full bg-stone-900" /> Large Cup Tallies
                 </h4>
-                <div className="grid grid-cols-4 gap-2">
-                  <div className="bg-stone-50 p-3 rounded-xl text-center border border-stone-100">
-                    <p className="text-[10px] uppercase font-bold text-stone-400 mb-1">Today</p>
-                    <p className="text-lg font-black text-stone-900">{stats.large.today}</p>
+                <div className="grid grid-cols-4 gap-1.5">
+                  <div className="bg-stone-50 p-2 rounded-lg text-center border border-stone-100">
+                    <p className="text-[10px] uppercase font-bold text-stone-400 mb-0.5">Today</p>
+                    <p className="text-base font-black text-stone-900">{stats.large.today}</p>
                   </div>
-                  <div className="bg-stone-50 p-3 rounded-xl text-center border border-stone-100">
-                    <p className="text-[10px] uppercase font-bold text-stone-400 mb-1">Week</p>
-                    <p className="text-lg font-black text-stone-900">{stats.large.week}</p>
+                  <div className="bg-stone-50 p-2 rounded-lg text-center border border-stone-100">
+                    <p className="text-[10px] uppercase font-bold text-stone-400 mb-0.5">Week</p>
+                    <p className="text-base font-black text-stone-900">{stats.large.week}</p>
                   </div>
-                  <div className="bg-stone-50 p-3 rounded-xl text-center border border-stone-100">
-                    <p className="text-[10px] uppercase font-bold text-stone-400 mb-1">Month</p>
-                    <p className="text-lg font-black text-stone-900">{stats.large.month}</p>
+                  <div className="bg-stone-50 p-2 rounded-lg text-center border border-stone-100">
+                    <p className="text-[10px] uppercase font-bold text-stone-400 mb-0.5">Month</p>
+                    <p className="text-base font-black text-stone-900">{stats.large.month}</p>
                   </div>
-                  <div className="bg-stone-900 p-3 rounded-xl text-center">
-                    <p className="text-[10px] uppercase font-bold text-stone-400 mb-1">Total</p>
-                    <p className="text-lg font-black text-white">{stats.large.total}</p>
+                  <div className="bg-stone-900 p-2 rounded-lg text-center">
+                    <p className="text-[10px] uppercase font-bold text-stone-400 mb-0.5">Total</p>
+                    <p className="text-base font-black text-white">{stats.large.total}</p>
                   </div>
                 </div>
               </div>
