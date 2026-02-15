@@ -34,66 +34,32 @@ export function KollelCoffeeTally({ onClose }: KollelCoffeeTallyProps) {
 
   const loadStats = async () => {
     const now = new Date();
-    const today = startOfDay(now).toISOString();
-    const week = startOfWeek(now).toISOString();
-    const month = startOfMonth(now).toISOString();
+    const todayDate = startOfDay(now);
+    const weekDate = startOfWeek(now);
+    const monthDate = startOfMonth(now);
 
-    try {
-      const queries = [
-        { type: "small", date: today },
-        { type: "small", date: week },
-        { type: "small", date: month },
-        { type: "small" },
-        { type: "large", date: today },
-        { type: "large", date: week },
-        { type: "large", date: month },
-        { type: "large" },
-      ];
+    const allTallies = await db.coffeeTallies.toArray();
 
-      const results = await Promise.all(
-        queries.map(async ({ type, date }) => {
-          let q = supabase.from("coffee_tallies").select("*", { count: "exact", head: true }).eq("type", type);
-          if (date) q = q.gte("created_at", date);
-          const { count, error } = await q;
-          if (error) console.warn("[kollel] Supabase query error:", error.message);
-          return count ?? 0;
-        })
-      );
-
-      setStats({
-        small: { today: results[0], week: results[1], month: results[2], total: results[3] },
-        large: { today: results[4], week: results[5], month: results[6], total: results[7] },
-      });
-      console.log("[kollel] Stats loaded from Supabase:", JSON.stringify({ small: results.slice(0, 4), large: results.slice(4) }));
-    } catch (err) {
-      console.warn("[kollel] Supabase stats failed, using local:", err);
-      const allTallies = await db.coffeeTallies.toArray();
-      const todayDate = startOfDay(now);
-      const weekDate = startOfWeek(now);
-      const monthDate = startOfMonth(now);
-
-      const getStatsForType = (type: "small" | "large") => {
-        const typeTallies = allTallies.filter(t => t.type === type);
-        return {
-          today: typeTallies.filter(t => isAfter(new Date(t.createdAt), todayDate)).length,
-          week: typeTallies.filter(t => isAfter(new Date(t.createdAt), weekDate)).length,
-          month: typeTallies.filter(t => isAfter(new Date(t.createdAt), monthDate)).length,
-          total: typeTallies.length,
-        };
+    const getStatsForType = (type: "small" | "large") => {
+      const typeTallies = allTallies.filter(t => t.type === type);
+      return {
+        today: typeTallies.filter(t => isAfter(new Date(t.createdAt), todayDate)).length,
+        week: typeTallies.filter(t => isAfter(new Date(t.createdAt), weekDate)).length,
+        month: typeTallies.filter(t => isAfter(new Date(t.createdAt), monthDate)).length,
+        total: typeTallies.length,
       };
+    };
 
-      setStats({
-        small: getStatsForType("small"),
-        large: getStatsForType("large"),
-      });
-      console.log("[kollel] Stats loaded from local DB");
-    }
+    setStats({
+      small: getStatsForType("small"),
+      large: getStatsForType("large"),
+    });
   };
 
   const handleLogCoffee = async () => {
     if (!selectedType) return;
     setIsLogging(true);
-    
+
     const tally: CoffeeTally = {
       id: nanoid(),
       type: selectedType,
@@ -103,27 +69,30 @@ export function KollelCoffeeTally({ onClose }: KollelCoffeeTallyProps) {
     };
 
     await db.coffeeTallies.add(tally);
-    
-    try {
-      const { error } = await supabase.from("coffee_tallies").insert({
-        type: selectedType,
-        count: 1,
-        created_at: tally.createdAt.toISOString(),
-        synced_from_device: true,
-      });
-      if (!error) {
-        await db.coffeeTallies.update(tally.id, { status: "synced", syncedAt: new Date() });
-        console.log("[kollel] Coffee tally synced to Supabase");
-      } else {
-        console.warn("[kollel] Supabase insert failed, will retry later:", error.message);
-      }
-    } catch (err) {
-      console.warn("[kollel] Network error syncing coffee tally, stored locally:", err);
-    }
 
     setIsLogging(false);
     setShowSuccess(true);
     loadStats();
+
+    (async () => {
+      try {
+        const { error } = await supabase.from("coffee_tallies").insert({
+          type: selectedType,
+          count: 1,
+          created_at: tally.createdAt.toISOString(),
+          synced_from_device: true,
+        });
+        if (!error) {
+          await db.coffeeTallies.update(tally.id, { status: "synced", syncedAt: new Date() });
+          console.log("[kollel] Coffee tally synced to Supabase");
+        } else {
+          console.warn("[kollel] Supabase insert failed:", error.message);
+        }
+      } catch (err) {
+        console.warn("[kollel] Network error syncing coffee tally:", err);
+      }
+    })();
+
     setTimeout(() => {
       onClose();
     }, 2000);
@@ -155,14 +124,19 @@ export function KollelCoffeeTally({ onClose }: KollelCoffeeTallyProps) {
     console.log("[kollel] Local coffee tallies cleared");
 
     try {
-      const { error } = await supabase.from("coffee_tallies").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-      if (error) {
-        console.warn("[kollel] Supabase delete error:", error.message);
+      const res = await fetch("/api/coffee-tallies/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin: RESET_PIN }),
+      });
+      const result = await res.json();
+      if (res.ok) {
+        console.log("[kollel] Supabase tallies deleted:", result.deleted);
       } else {
-        console.log("[kollel] All coffee tallies deleted from Supabase");
+        console.warn("[kollel] Server reset error:", result.error);
       }
     } catch (err) {
-      console.warn("[kollel] Network error deleting from Supabase:", err);
+      console.warn("[kollel] Network error on reset:", err);
     }
 
     setIsResetting(false);
@@ -197,7 +171,7 @@ export function KollelCoffeeTally({ onClose }: KollelCoffeeTallyProps) {
         <div className="p-4 border-b border-stone-100 flex items-center justify-between bg-stone-50 shrink-0">
           <div className="flex items-center gap-2">
             {step !== "select" && !showSuccess && !resetDone && (
-              <button 
+              <button
                 onClick={goBack}
                 className="p-1 -ml-1 hover:bg-stone-200 rounded-full transition-colors"
               >
@@ -412,7 +386,7 @@ export function KollelCoffeeTally({ onClose }: KollelCoffeeTallyProps) {
               <p className="text-stone-500 text-sm mb-8 leading-relaxed">
                 Log 1 <span className="text-stone-900 font-bold uppercase tracking-widest">{selectedType}</span> coffee?
               </p>
-              
+
               <div className="grid grid-cols-2 gap-3 w-full">
                 <button
                   onClick={() => setStep("select")}

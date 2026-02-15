@@ -1,14 +1,42 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import { createClient } from "@supabase/supabase-js";
 import { storage } from "./storage";
 import { api } from "@shared/routes";
 import path from "path";
 import fs from "fs";
 
+const supabaseAdmin = createClient(
+  process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "",
+  process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || ""
+);
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  app.post("/api/coffee-tallies/reset", async (req, res) => {
+    const { pin } = req.body;
+    if (pin !== "181818") {
+      return res.status(403).json({ error: "Invalid PIN" });
+    }
+    try {
+      const { error, count } = await supabaseAdmin
+        .from("coffee_tallies")
+        .delete({ count: "exact" })
+        .not("id", "is", null);
+      if (error) {
+        console.error("[reset] Supabase delete error:", error.message);
+        return res.status(500).json({ error: error.message });
+      }
+      console.log(`[reset] Deleted ${count} coffee tallies from Supabase`);
+      res.json({ deleted: count });
+    } catch (err: any) {
+      console.error("[reset] Server error:", err.message);
+      res.status(500).json({ error: "Server error" });
+    }
+  });
+
   app.get("/download/pdca-kiosk-debug.apk", (_req, res) => {
     const apkPath = path.resolve("android/app/build/outputs/apk/debug/app-debug.apk");
     if (fs.existsSync(apkPath)) {
