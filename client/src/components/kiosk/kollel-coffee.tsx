@@ -57,47 +57,50 @@ export function KollelCoffeeTally({ onClose }: KollelCoffeeTallyProps) {
     const week = startOfWeek(now).toISOString();
     const month = startOfMonth(now).toISOString();
 
+    let resetCutoff: string | null = null;
     try {
-      const resetCutoff = await getResetCutoff("supabase");
+      resetCutoff = await getResetCutoff("supabase");
+    } catch {
+      resetCutoff = await getResetCutoff("local");
+    }
 
-      const buildQuery = (type: string, dateFilter?: string) => {
-        let q = supabase.from("coffee_tallies").select("*", { count: "exact", head: true }).eq("type", type);
-        const cutoff = resetCutoff && dateFilter
-          ? (resetCutoff > dateFilter ? resetCutoff : dateFilter)
-          : (dateFilter || resetCutoff);
-        if (cutoff) q = q.gte("created_at", cutoff);
-        return q;
-      };
+    const getCutoff = (dateFilter?: string) => {
+      if (resetCutoff && dateFilter) return resetCutoff > dateFilter ? resetCutoff : dateFilter;
+      return dateFilter || resetCutoff || undefined;
+    };
 
-      const [
-        { count: smallToday },
-        { count: smallWeek },
-        { count: smallMonth },
-        { count: smallTotal },
-        { count: largeToday },
-        { count: largeWeek },
-        { count: largeMonth },
-        { count: largeTotal },
-      ] = await Promise.all([
-        buildQuery("small", today),
-        buildQuery("small", week),
-        buildQuery("small", month),
-        buildQuery("small"),
-        buildQuery("large", today),
-        buildQuery("large", week),
-        buildQuery("large", month),
-        buildQuery("large"),
-      ]);
+    try {
+      const queries = [
+        { type: "small", date: today },
+        { type: "small", date: week },
+        { type: "small", date: month },
+        { type: "small" },
+        { type: "large", date: today },
+        { type: "large", date: week },
+        { type: "large", date: month },
+        { type: "large" },
+      ];
+
+      const results = await Promise.all(
+        queries.map(async ({ type, date }) => {
+          let q = supabase.from("coffee_tallies").select("*", { count: "exact", head: true }).eq("type", type);
+          const cutoff = getCutoff(date);
+          if (cutoff) q = q.gte("created_at", cutoff);
+          const { count, error } = await q;
+          if (error) console.warn("[kollel] Supabase query error:", error.message);
+          return count ?? 0;
+        })
+      );
 
       setStats({
-        small: { today: smallToday ?? 0, week: smallWeek ?? 0, month: smallMonth ?? 0, total: smallTotal ?? 0 },
-        large: { today: largeToday ?? 0, week: largeWeek ?? 0, month: largeMonth ?? 0, total: largeTotal ?? 0 },
+        small: { today: results[0], week: results[1], month: results[2], total: results[3] },
+        large: { today: results[4], week: results[5], month: results[6], total: results[7] },
       });
-      console.log("[kollel] Stats loaded from Supabase");
-    } catch {
+      console.log("[kollel] Stats loaded from Supabase:", JSON.stringify({ small: results.slice(0, 4), large: results.slice(4) }));
+    } catch (err) {
+      console.warn("[kollel] Supabase stats failed, using local:", err);
       const allTallies = await db.coffeeTallies.toArray();
-      const resetCutoffLocal = await getResetCutoff("local");
-      const cutoffDate = resetCutoffLocal ? new Date(resetCutoffLocal) : null;
+      const cutoffDate = resetCutoff ? new Date(resetCutoff) : null;
 
       const todayDate = startOfDay(now);
       const weekDate = startOfWeek(now);
@@ -118,7 +121,7 @@ export function KollelCoffeeTally({ onClose }: KollelCoffeeTallyProps) {
         small: getStatsForType("small"),
         large: getStatsForType("large"),
       });
-      console.log("[kollel] Stats loaded from local DB (offline fallback)");
+      console.log("[kollel] Stats loaded from local DB");
     }
   };
 
