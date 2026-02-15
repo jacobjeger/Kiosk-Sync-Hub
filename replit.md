@@ -7,7 +7,7 @@ A local-first PWA payment kiosk application built with React/Vite, Dexie.js (Ind
 - **Frontend**: React + Vite, fullscreen kiosk layout (no sidebar, no routing - single KioskPage with step-based flow)
 - **Backend**: Express server (minimal - serves static assets only)
 - **Local DB**: Dexie.js (IndexedDB) for members, businesses, and offline transaction queue
-- **Cloud DB**: Supabase (READ-ONLY / APPEND-ONLY - only `.insert()` and `.rpc()` allowed, never `.update()`, `.delete()`, or `.upsert()`)
+- **Cloud DB**: Supabase (APPEND-ONLY for transactions - only `.insert()` and `.rpc()` allowed; exception: coffee tallies reset uses `.delete()` with PIN protection)
 - **Styling**: Tailwind CSS with stone color palette (kiosk-specific, NOT using shadcn theme variables)
 
 ## Key Design Decisions

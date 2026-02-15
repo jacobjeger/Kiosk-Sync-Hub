@@ -32,42 +32,11 @@ export function KollelCoffeeTally({ onClose }: KollelCoffeeTallyProps) {
     }
   }, [step]);
 
-  const getResetCutoff = async (source: "supabase" | "local"): Promise<string | null> => {
-    if (source === "supabase") {
-      const { data } = await supabase
-        .from("coffee_tallies")
-        .select("created_at")
-        .eq("type", "reset")
-        .order("created_at", { ascending: false })
-        .limit(1);
-      return data && data.length > 0 ? data[0].created_at : null;
-    } else {
-      const resets = await db.coffeeTallies
-        .where("type")
-        .equals("reset")
-        .reverse()
-        .sortBy("createdAt");
-      return resets.length > 0 ? new Date(resets[0].createdAt).toISOString() : null;
-    }
-  };
-
   const loadStats = async () => {
     const now = new Date();
     const today = startOfDay(now).toISOString();
     const week = startOfWeek(now).toISOString();
     const month = startOfMonth(now).toISOString();
-
-    let resetCutoff: string | null = null;
-    try {
-      resetCutoff = await getResetCutoff("supabase");
-    } catch {
-      resetCutoff = await getResetCutoff("local");
-    }
-
-    const getCutoff = (dateFilter?: string) => {
-      if (resetCutoff && dateFilter) return resetCutoff > dateFilter ? resetCutoff : dateFilter;
-      return dateFilter || resetCutoff || undefined;
-    };
 
     try {
       const queries = [
@@ -84,8 +53,7 @@ export function KollelCoffeeTally({ onClose }: KollelCoffeeTallyProps) {
       const results = await Promise.all(
         queries.map(async ({ type, date }) => {
           let q = supabase.from("coffee_tallies").select("*", { count: "exact", head: true }).eq("type", type);
-          const cutoff = getCutoff(date);
-          if (cutoff) q = q.gte("created_at", cutoff);
+          if (date) q = q.gte("created_at", date);
           const { count, error } = await q;
           if (error) console.warn("[kollel] Supabase query error:", error.message);
           return count ?? 0;
@@ -100,15 +68,12 @@ export function KollelCoffeeTally({ onClose }: KollelCoffeeTallyProps) {
     } catch (err) {
       console.warn("[kollel] Supabase stats failed, using local:", err);
       const allTallies = await db.coffeeTallies.toArray();
-      const cutoffDate = resetCutoff ? new Date(resetCutoff) : null;
-
       const todayDate = startOfDay(now);
       const weekDate = startOfWeek(now);
       const monthDate = startOfMonth(now);
 
       const getStatsForType = (type: "small" | "large") => {
-        let typeTallies = allTallies.filter(t => t.type === type);
-        if (cutoffDate) typeTallies = typeTallies.filter(t => isAfter(new Date(t.createdAt), cutoffDate));
+        const typeTallies = allTallies.filter(t => t.type === type);
         return {
           today: typeTallies.filter(t => isAfter(new Date(t.createdAt), todayDate)).length,
           week: typeTallies.filter(t => isAfter(new Date(t.createdAt), weekDate)).length,
@@ -185,27 +150,19 @@ export function KollelCoffeeTally({ onClose }: KollelCoffeeTallyProps) {
     }
 
     setIsResetting(true);
-    const resetTime = new Date();
 
-    const resetTally: CoffeeTally = {
-      id: nanoid(),
-      type: "reset" as any,
-      count: 0,
-      status: "synced",
-      createdAt: resetTime,
-    };
-    await db.coffeeTallies.add(resetTally);
+    await db.coffeeTallies.clear();
+    console.log("[kollel] Local coffee tallies cleared");
 
     try {
-      await supabase.from("coffee_tallies").insert({
-        type: "reset",
-        count: 0,
-        created_at: resetTime.toISOString(),
-        synced_from_device: true,
-      });
-      console.log("[kollel] Reset marker synced to Supabase");
+      const { error } = await supabase.from("coffee_tallies").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+      if (error) {
+        console.warn("[kollel] Supabase delete error:", error.message);
+      } else {
+        console.log("[kollel] All coffee tallies deleted from Supabase");
+      }
     } catch (err) {
-      console.warn("[kollel] Reset marker stored locally, will appear on this device:", err);
+      console.warn("[kollel] Network error deleting from Supabase:", err);
     }
 
     setIsResetting(false);
