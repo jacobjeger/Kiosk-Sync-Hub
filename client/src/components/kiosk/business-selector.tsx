@@ -37,13 +37,22 @@ const BusinessButton = memo(function BusinessButton({
       }`}
     >
       <div
-        className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+        className={`w-10 h-10 rounded-lg flex items-center justify-center overflow-hidden ${
           isFavorite
             ? "bg-emerald-100 text-emerald-600"
             : "bg-stone-100 text-stone-600"
         }`}
       >
-        {categoryIcons[business.category || "default"] || categoryIcons.default}
+        {business.icon_url ? (
+          <img
+            src={business.icon_url}
+            alt={business.name}
+            className="w-full h-full object-cover"
+            data-testid={`img-business-icon-${business.id}`}
+          />
+        ) : (
+          categoryIcons[business.category || "default"] || categoryIcons.default
+        )}
       </div>
       <p className="font-medium text-stone-900 text-center text-sm leading-tight line-clamp-2">
         {business.name}

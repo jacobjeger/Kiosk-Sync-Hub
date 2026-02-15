@@ -6,6 +6,7 @@ export interface Business {
   is_active: boolean;
   preset_amounts?: number[] | null;
   fee_percentage: number;
+  icon_url?: string | null;
   created_at: string;
   updated_at: string;
 }

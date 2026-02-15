@@ -27,16 +27,32 @@ export function useKioskData() {
           .order("last_name"),
         supabase
           .from("businesses")
-          .select("id, name, description, category, is_active, preset_amounts, fee_percentage, created_at, updated_at")
+          .select("id, name, description, category, is_active, preset_amounts, fee_percentage, icon_url, created_at, updated_at")
           .eq("is_active", true)
           .order("name"),
       ]);
 
       if (membersRes.error) throw membersRes.error;
-      if (businessesRes.error) throw businessesRes.error;
+
+      let fetchedBusinesses: Business[];
+      if (businessesRes.error) {
+        if (businessesRes.error.code === "42703") {
+          console.warn("[kiosk] icon_url column not found, fetching without it");
+          const fallback = await supabase
+            .from("businesses")
+            .select("id, name, description, category, is_active, preset_amounts, fee_percentage, created_at, updated_at")
+            .eq("is_active", true)
+            .order("name");
+          if (fallback.error) throw fallback.error;
+          fetchedBusinesses = (fallback.data || []) as Business[];
+        } else {
+          throw businessesRes.error;
+        }
+      } else {
+        fetchedBusinesses = (businessesRes.data || []) as Business[];
+      }
 
       const fetchedMembers = (membersRes.data || []) as Member[];
-      const fetchedBusinesses = (businessesRes.data || []) as Business[];
 
       setMembers(fetchedMembers);
       setBusinesses(fetchedBusinesses);
