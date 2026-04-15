@@ -1,0 +1,45 @@
+~/workspace$ git remote add origin https://github.com/jacobjeger/Kiosk-Sync-Hub.git
+git branch -M main
+git push -u origin main
+error: remote origin already exists.
+Enumerating objects: 554, done.
+Counting objects: 100% (554/554), done.
+Delta compression using up to 8 threads
+Compressing objects: 100% (520/520), done.
+Writing objects: 100% (554/554), 9.83 MiB | 5.08 MiB/s, done.
+Total 554 (delta 274), reused 0 (delta 0), pack-reused 0 (from 0)
+remote: Resolving deltas: 100% (274/274), done.
+remote: error: GH013: Repository rule violations found for refs/heads/main.
+remote: 
+remote: - GITHUB PUSH PROTECTION
+remote:   —————————————————————————————————————————
+remote:     Resolve the following violations before pushing again
+remote: 
+remote:     - Push cannot contain secrets
+remote: 
+remote:     
+remote:      (?) Learn how to resolve a blocked push
+remote:      https://docs.github.com/code-security/secret-scanning/working-with-secret-scanning-and-push-protection/working-with-push-protection-from-the-command-line#resolving-a-blocked-push
+remote:     
+remote:     
+remote:       —— Supabase Secret Key ———————————————————————————————
+remote:        locations:
+remote:          - commit: 2fce73cebef943f5a15b97d10379e3bef4b114c1
+remote:            path: .replit:45
+remote:          - commit: c8168a5212deeab646bd3de6c5b402444d7f4b25
+remote:            path: .replit:45
+remote:          - commit: 9c099ee6e32f98ef4d95697f60029ad3b17214f7
+remote:            path: .replit:45
+remote:          - commit: 64850debac0689cba398a2f0628b8b680599f4d8
+remote:            path: .replit:46
+remote:          - commit: c8168a5212deeab646bd3de6c5b402444d7f4b25
+remote:            path: .replit:47
+remote:     
+remote:        (?) To push, remove secret from commit(s) or follow this URL to allow the secret.
+remote:        https://github.com/jacobjeger/Kiosk-Sync-Hub/security/secret-scanning/unblock-secret/3COosOtoz4ohN2b1AUM3JDaFpmx
+remote:     
+remote: 
+remote: 
+To https://github.com/jacobjeger/Kiosk-Sync-Hub
+ ! [remote rejected] main -> main (push declined due to repository rule violations)
+error: failed to push
