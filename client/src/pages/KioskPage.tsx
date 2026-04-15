@@ -244,6 +244,9 @@ export default function KioskPage() {
             <span className="text-stone-900 text-base font-bold tracking-tight">
               PDCA
             </span>
+            <span className="text-stone-300 text-[9px] font-medium leading-none mt-0.5" data-testid="text-app-version">
+              v1.7
+            </span>
             <div className="relative" ref={syncPopupRef}>
               <button
                 onClick={() => setShowSyncStatus(!showSyncStatus)}
