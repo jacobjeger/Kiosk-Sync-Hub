@@ -22,11 +22,14 @@ export interface Member {
   is_active: boolean;
   pin_code: string | null;
   card_status?: "active" | "declined" | "pending_review";
+  card_last_four: string | null;
   status: "active" | "paused" | "deleted";
   pause_reason: string | null;
   kiosk_message: string | null;
   skip_pin: boolean;
   pin_confirmed?: boolean;
+  is_cash_collector: boolean;
+  cash_collector_pin: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -55,4 +58,30 @@ export interface OfflineTransaction {
   createdAt: Date;
   syncedAt?: Date;
   retryCount: number;
+}
+
+export interface OfflineCashPayment {
+  id: string;
+  clientPaymentId: string;
+  memberId: string;
+  memberName: string;
+  billingCycleId: string;
+  billingCycleName: string;
+  amount: number;
+  collectorMemberId: string | null;
+  paymentType: "cash" | "zelle";
+  notes: string | null;
+  isFullPayment: boolean;
+  status: "pending" | "synced" | "failed";
+  createdAt: Date;
+  syncedAt?: Date;
+  retryCount: number;
+}
+
+export interface CashPaymentCacheEntry {
+  id: string;
+  member_id: string;
+  billing_cycle_id: string;
+  amount: number;
+  created_at: string;
 }

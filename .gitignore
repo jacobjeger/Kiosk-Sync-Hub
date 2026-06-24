@@ -6,3 +6,13 @@ vite.config.ts.*
 *.tar.gz
 .replit
 replit.nix
+.env
+.env.local
+.env.*.local
+android/local.properties
+android/.gradle/
+android/build/
+android/app/build/
+android/app/release/
+*.keystore
+*.jks

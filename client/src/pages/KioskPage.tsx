@@ -10,8 +10,22 @@ import { SuccessScreen } from "@/components/kiosk/success-screen";
 import { IdleOverlay } from "@/components/kiosk/idle-overlay";
 import { ProfileDrawer } from "@/components/kiosk/profile-drawer";
 import { KioskMessagePopup } from "@/components/kiosk/kiosk-message-popup";
+import { PinConfirmationScreen } from "@/components/kiosk/pin-confirmation-screen";
+import { PinChange } from "@/components/kiosk/pin-change";
+import { DeclinedCardPopup } from "@/components/kiosk/declined-card-popup";
+import { MessagePopup } from "@/components/kiosk/message-popup";
+import { QuestionModal } from "@/components/kiosk/question-modal";
+import CashCollectionPage from "@/pages/CashCollectionPage";
 import type { Member, Business } from "@/lib/types";
 import { useNetworkStatus } from "@/hooks/use-network-status";
+import {
+  confirmMemberPin,
+  getUnreadMessages,
+  markMessagesRead,
+  updateMemberPin,
+} from "@/lib/kiosk-actions";
+import { setActiveMember, setSessionContext } from "@/lib/error-reporter";
+import { Banknote } from "lucide-react";
 import {
   ChevronLeft,
   AlertTriangle,
@@ -26,6 +40,9 @@ import {
 type KioskStep =
   | "member"
   | "pin"
+  | "pin_confirmation"
+  | "cash_collector_pin"
+  | "cash_collection"
   | "business"
   | "product"
   | "success"
@@ -38,7 +55,7 @@ const PIN_IDLE_TIMEOUT = 10000;
 export default function KioskPage() {
   const { members, businesses, isLoading: dataLoading, refresh, isError } = useKioskData();
   const { isOnline, onReconnect } = useNetworkStatus();
-  const { pendingCount, isSyncing, queueTransaction, syncAll } =
+  const { pendingCount, pendingCashCount, isSyncing, queueTransaction, queueCashPayment, syncAll } =
     useOfflineQueue(onReconnect);
 
   useEffect(() => {
@@ -56,6 +73,13 @@ export default function KioskPage() {
   const [lastTransactionAmount, setLastTransactionAmount] = useState<number>(0);
   const [showProfile, setShowProfile] = useState(false);
   const [showKioskMessage, setShowKioskMessage] = useState(false);
+  const [showDeclinedPopup, setShowDeclinedPopup] = useState(false);
+  const [unreadMessages, setUnreadMessages] = useState<
+    Array<{ id: string; question: string; answer: string; answered_at: string }>
+  >([]);
+  const [showMessages, setShowMessages] = useState(false);
+  const [showQuestionModal, setShowQuestionModal] = useState(false);
+  const [showPinChange, setShowPinChange] = useState(false);
   const [showIdleWarning, setShowIdleWarning] = useState(false);
   const [idleCountdown, setIdleCountdown] = useState(10);
   const [pinVerified, setPinVerified] = useState(false);
@@ -86,6 +110,14 @@ export default function KioskPage() {
     setIdleCountdown(10);
   }, []);
 
+  useEffect(() => {
+    setActiveMember(selectedMember?.id ?? null);
+  }, [selectedMember?.id]);
+
+  useEffect(() => {
+    setSessionContext({ step });
+  }, [step]);
+
   const handleReset = useCallback(() => {
     setSelectedMember(null);
     setSelectedBusiness(null);
@@ -94,18 +126,30 @@ export default function KioskPage() {
     setIdleCountdown(10);
     setShowProfile(false);
     setShowKioskMessage(false);
+    setShowDeclinedPopup(false);
+    setUnreadMessages([]);
+    setShowMessages(false);
+    setShowQuestionModal(false);
+    setShowPinChange(false);
     setPinVerified(false);
   }, []);
 
   useEffect(() => {
-    if (!selectedMember || step === "member" || step === "success") return;
+    if (
+      !selectedMember ||
+      step === "member" ||
+      step === "success" ||
+      step === "cash_collection" ||
+      step === "pin_confirmation"
+    )
+      return;
 
-    const timeout = step === "pin" ? PIN_IDLE_TIMEOUT : IDLE_TIMEOUT;
+    const timeout = step === "pin" || step === "cash_collector_pin" ? PIN_IDLE_TIMEOUT : IDLE_TIMEOUT;
 
     let idleTimer: ReturnType<typeof setTimeout>;
     const startIdleTimer = () => {
       idleTimer = setTimeout(() => {
-        if (step === "pin") {
+        if (step === "pin" || step === "cash_collector_pin") {
           handleReset();
         } else {
           setShowIdleWarning(true);
@@ -144,6 +188,28 @@ export default function KioskPage() {
     return () => clearInterval(timer);
   }, [showIdleWarning, handleReset]);
 
+  // After PIN entry, drop into the normal business flow. Cash collectors get an
+  // additional "Cash Collection" CTA inside the business step (see business render).
+  const advanceAfterPin = useCallback((member: Member) => {
+    if (member.pin_code && !member.pin_confirmed) {
+      setStep("pin_confirmation");
+      return;
+    }
+    if (member.card_status === "declined") {
+      setShowDeclinedPopup(true);
+    }
+    setStep("business");
+    if (member.kiosk_message) setShowKioskMessage(true);
+  }, []);
+
+  const enterCashCollection = useCallback((member: Member) => {
+    if (member.cash_collector_pin) {
+      setStep("cash_collector_pin");
+    } else {
+      setStep("cash_collection");
+    }
+  }, []);
+
   const handleMemberSelect = (member: Member) => {
     setSelectedMember(member);
     if (member.is_active === false) {
@@ -155,13 +221,29 @@ export default function KioskPage() {
       return;
     }
 
+    // Fire-and-forget: fetch any unread admin replies for this member.
+    getUnreadMessages(member.id)
+      .then((res) => {
+        if (res.success && res.messages.length > 0) {
+          setUnreadMessages(
+            res.messages as Array<{
+              id: string;
+              question: string;
+              answer: string;
+              answered_at: string;
+            }>
+          );
+          setShowMessages(true);
+        }
+      })
+      .catch((err) => console.warn("[kiosk] unread fetch failed", err));
+
     const shouldRequirePin = member.pin_code && !member.skip_pin;
     if (shouldRequirePin) {
       setStep("pin");
     } else {
       setPinVerified(true);
-      setStep("business");
-      if (member.kiosk_message) setShowKioskMessage(true);
+      advanceAfterPin(member);
     }
   };
 
@@ -204,6 +286,17 @@ export default function KioskPage() {
     );
   }
 
+  if (step === "cash_collection" && selectedMember) {
+    return (
+      <CashCollectionPage
+        collector={selectedMember}
+        isOnline={isOnline && !isError}
+        queueCashPayment={queueCashPayment}
+        onExit={handleReset}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-stone-50 flex flex-col select-none">
       {showIdleWarning && (
@@ -226,13 +319,63 @@ export default function KioskPage() {
         />
       )}
 
+      {showDeclinedPopup && selectedMember && (
+        <DeclinedCardPopup
+          member={selectedMember}
+          onClose={() => setShowDeclinedPopup(false)}
+          onResolutionSubmitted={() => setShowDeclinedPopup(false)}
+        />
+      )}
+
+      {showMessages && selectedMember && unreadMessages.length > 0 && (
+        <MessagePopup
+          memberId={selectedMember.id}
+          memberName={`${selectedMember.first_name} ${selectedMember.last_name}`}
+          messages={unreadMessages}
+          onClose={() => {
+            const ids = unreadMessages.map((m) => m.id);
+            void markMessagesRead(ids);
+            setShowMessages(false);
+            setUnreadMessages([]);
+          }}
+        />
+      )}
+
+      {showQuestionModal && selectedMember && (
+        <QuestionModal
+          memberId={selectedMember.id}
+          memberName={`${selectedMember.first_name} ${selectedMember.last_name}`}
+          onClose={() => setShowQuestionModal(false)}
+        />
+      )}
+
+      {showPinChange && selectedMember && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 p-6">
+            <PinChange
+              member={selectedMember}
+              onSuccess={async (newPin) => {
+                const res = await updateMemberPin(selectedMember.id, newPin);
+                if (res.success) {
+                  setSelectedMember({ ...selectedMember, pin_code: newPin, pin_confirmed: true });
+                }
+                setShowPinChange(false);
+              }}
+              onCancel={() => setShowPinChange(false)}
+            />
+          </div>
+        </div>
+      )}
+
       <header className="bg-white border-b border-stone-200 px-3 py-2 flex-shrink-0 sticky top-0 z-40">
         <div className="flex items-center justify-between max-w-lg mx-auto gap-2">
           <div className="flex items-center gap-2">
             {step !== "member" &&
               step !== "success" &&
               step !== "paused" &&
-              step !== "disabled" && (
+              step !== "disabled" &&
+              step !== "cash_collector_pin" &&
+              step !== "pin_confirmation" && (
                 <button
                   data-testid="button-back"
                   onClick={handleBack}
@@ -245,7 +388,7 @@ export default function KioskPage() {
               PDCA
             </span>
             <span className="text-stone-300 text-[9px] font-medium leading-none mt-0.5" data-testid="text-app-version">
-              v1.7
+              v1.8
             </span>
             <div className="relative" ref={syncPopupRef}>
               <button
@@ -262,9 +405,9 @@ export default function KioskPage() {
                 ) : (
                   <WifiOff className="w-3 h-3" />
                 )}
-                {pendingCount > 0 && (
+                {(pendingCount + pendingCashCount) > 0 && (
                   <span className="bg-amber-500 text-white text-[8px] font-bold w-3.5 h-3.5 rounded-full flex items-center justify-center -mr-0.5">
-                    {pendingCount}
+                    {pendingCount + pendingCashCount}
                   </span>
                 )}
               </button>
@@ -296,12 +439,22 @@ export default function KioskPage() {
                     )}
                   </div>
 
-                  {pendingCount > 0 ? (
+                  {(pendingCount + pendingCashCount) > 0 ? (
                     <div className="border-t border-stone-100 pt-2">
                       <div className="flex items-center gap-2 mb-2">
                         <CloudOff className="w-4 h-4 text-amber-500" />
                         <span className="text-xs text-stone-600">
-                          {pendingCount} pending transaction{pendingCount > 1 ? "s" : ""}
+                          {pendingCount > 0 && (
+                            <>
+                              {pendingCount} pending transaction{pendingCount > 1 ? "s" : ""}
+                            </>
+                          )}
+                          {pendingCount > 0 && pendingCashCount > 0 && <> · </>}
+                          {pendingCashCount > 0 && (
+                            <>
+                              {pendingCashCount} pending cash payment{pendingCashCount > 1 ? "s" : ""}
+                            </>
+                          )}
                         </span>
                       </div>
                       {isOnline && !isError && (
@@ -329,7 +482,7 @@ export default function KioskPage() {
             </div>
           </div>
 
-          {step !== "success" && step !== "paused" && step !== "disabled" && (
+          {step !== "success" && step !== "paused" && step !== "disabled" && step !== "cash_collector_pin" && step !== "pin_confirmation" && (
             <div className="flex items-center gap-1">
               {[
                 { key: "member", label: "Select" },
@@ -372,6 +525,8 @@ export default function KioskPage() {
             step !== "success" &&
             step !== "paused" &&
             step !== "pin" &&
+            step !== "cash_collector_pin" &&
+            step !== "pin_confirmation" &&
             step !== "disabled" && (
               <button
                 data-testid="button-open-profile"
@@ -409,14 +564,39 @@ export default function KioskPage() {
               member={selectedMember}
               onSuccess={() => {
                 setPinVerified(true);
-                setStep("business");
-                if (selectedMember.kiosk_message) setShowKioskMessage(true);
+                advanceAfterPin(selectedMember);
               }}
               onCancel={() => {
                 setSelectedMember(null);
                 setStep("member");
                 setPinVerified(false);
               }}
+            />
+          )}
+
+          {step === "cash_collector_pin" && selectedMember && (
+            <PinEntry
+              member={selectedMember}
+              expectedPin={selectedMember.cash_collector_pin}
+              label="Cash Collector PIN"
+              onSuccess={() => setStep("cash_collection")}
+              onCancel={handleReset}
+            />
+          )}
+
+          {step === "pin_confirmation" && selectedMember && (
+            <PinConfirmationScreen
+              member={selectedMember}
+              onConfirm={async () => {
+                await confirmMemberPin(selectedMember.id);
+                setSelectedMember({ ...selectedMember, pin_confirmed: true });
+                if (selectedMember.card_status === "declined") {
+                  setShowDeclinedPopup(true);
+                }
+                setStep("business");
+                if (selectedMember.kiosk_message) setShowKioskMessage(true);
+              }}
+              onBack={handleReset}
             />
           )}
 
@@ -470,14 +650,40 @@ export default function KioskPage() {
           )}
 
           {step === "business" && selectedMember && (
-            <BusinessSelector
-              businesses={businesses}
-              member={selectedMember}
-              onSelect={(business) => {
-                setSelectedBusiness(business);
-                setStep("product");
-              }}
-            />
+            <>
+              {selectedMember.is_cash_collector && (
+                <button
+                  onClick={() => enterCashCollection(selectedMember)}
+                  className="w-full mb-3 flex items-center justify-between gap-3 bg-amber-50 hover:bg-amber-100 border-2 border-amber-200 rounded-2xl p-3 text-left transition-colors active:scale-[0.98]"
+                  data-testid="button-cash-collection"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center">
+                      <Banknote className="w-5 h-5 text-amber-700" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-amber-900">
+                        Cash Collection Mode
+                      </p>
+                      <p className="text-xs text-amber-700">
+                        {selectedMember.cash_collector_pin
+                          ? "Enter collector PIN to start"
+                          : "Start collecting cash payments"}
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronLeft className="w-5 h-5 text-amber-700 rotate-180" />
+                </button>
+              )}
+              <BusinessSelector
+                businesses={businesses}
+                member={selectedMember}
+                onSelect={(business) => {
+                  setSelectedBusiness(business);
+                  setStep("product");
+                }}
+              />
+            </>
           )}
 
           {step === "product" && selectedMember && selectedBusiness && (

@@ -6,12 +6,15 @@ interface PinEntryProps {
   member: Member;
   onSuccess: () => void;
   onCancel: () => void;
+  expectedPin?: string | null;
+  label?: string;
 }
 
-export function PinEntry({ member, onSuccess, onCancel }: PinEntryProps) {
+export function PinEntry({ member, onSuccess, onCancel, expectedPin, label }: PinEntryProps) {
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [attempts, setAttempts] = useState(0);
+  const targetPin = expectedPin ?? member.pin_code;
 
   const handleNumpadPress = (key: string) => {
     if (key === "backspace") {
@@ -23,7 +26,7 @@ export function PinEntry({ member, onSuccess, onCancel }: PinEntryProps) {
       setError("");
 
       if (newPin.length === 4) {
-        if (newPin === member.pin_code) {
+        if (newPin === targetPin) {
           onSuccess();
         } else {
           const newAttempts = attempts + 1;
@@ -52,7 +55,7 @@ export function PinEntry({ member, onSuccess, onCancel }: PinEntryProps) {
           <h2 className="text-xl font-semibold text-stone-900">
             {member.first_name} {member.last_name}
           </h2>
-          <p className="text-stone-500 text-base mt-1">Enter PIN</p>
+          <p className="text-stone-500 text-base mt-1">{label ?? "Enter PIN"}</p>
         </div>
 
         <div className="flex justify-center gap-4 mb-6" data-testid="pin-dots">

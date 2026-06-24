@@ -19,10 +19,13 @@ export function useKioskData() {
 
   const fetchFromSupabase = useCallback(async () => {
     try {
+      const MEMBER_COLUMNS_FULL = "id, member_code, first_name, last_name, email, phone, balance, is_active, pin_code, card_status, card_last_four, status, pause_reason, kiosk_message, skip_pin, pin_confirmed, is_cash_collector, cash_collector_pin, created_at, updated_at";
+      const MEMBER_COLUMNS_LEGACY = "id, member_code, first_name, last_name, email, phone, balance, is_active, pin_code, card_status, status, pause_reason, kiosk_message, skip_pin, pin_confirmed, created_at, updated_at";
+
       const [membersRes, businessesRes] = await Promise.all([
         supabase
           .from("members")
-          .select("id, member_code, first_name, last_name, email, phone, balance, is_active, pin_code, card_status, status, pause_reason, kiosk_message, skip_pin, pin_confirmed, created_at, updated_at")
+          .select(MEMBER_COLUMNS_FULL)
           .in("status", ["active", "paused"])
           .order("last_name"),
         supabase
@@ -32,7 +35,31 @@ export function useKioskData() {
           .order("name"),
       ]);
 
-      if (membersRes.error) throw membersRes.error;
+      let fetchedMembersData: any[] = membersRes.error ? [] : (membersRes.data as any[]) ?? [];
+      if (membersRes.error) {
+        const errMsg = membersRes.error.message || "";
+        const errCode = membersRes.error.code || "";
+        const isCollectorColMissing =
+          errCode === "42703" ||
+          errCode === "PGRST204" ||
+          errMsg.includes("is_cash_collector") ||
+          errMsg.includes("cash_collector_pin") ||
+          errMsg.includes("card_last_four");
+        if (isCollectorColMissing) {
+          console.warn(
+            "[kiosk] Cash-collector columns not found on members table, falling back to legacy select."
+          );
+          const fallback = await supabase
+            .from("members")
+            .select(MEMBER_COLUMNS_LEGACY)
+            .in("status", ["active", "paused"])
+            .order("last_name");
+          if (fallback.error) throw fallback.error;
+          fetchedMembersData = (fallback.data as any[]) ?? [];
+        } else {
+          throw membersRes.error;
+        }
+      }
 
       let fetchedBusinesses: Business[];
       if (businessesRes.error) {
@@ -59,7 +86,7 @@ export function useKioskData() {
         fetchedBusinesses = (businessesRes.data || []) as Business[];
       }
 
-      const fetchedMembers = (membersRes.data || []) as Member[];
+      const fetchedMembers = (fetchedMembersData || []) as Member[];
 
       setMembers(fetchedMembers);
       setBusinesses(fetchedBusinesses);
