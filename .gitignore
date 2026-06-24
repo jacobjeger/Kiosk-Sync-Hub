@@ -9,6 +9,9 @@ replit.nix
 .env
 .env.local
 .env.*.local
+client/.env
+client/.env.local
+client/.env.*.local
 android/local.properties
 android/.gradle/
 android/build/
