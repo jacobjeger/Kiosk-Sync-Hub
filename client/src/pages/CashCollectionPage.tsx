@@ -222,7 +222,10 @@ export default function CashCollectionPage({
       invoiceTotal = Number(data?.total_amount ?? 0);
     }
 
-    // Cash payments — server-of-record plus any locally-queued ones.
+    // Cash payments — server-of-record plus any locally-queued ones that
+    // haven't synced yet. After a successful sync we drop the cache row in
+    // use-offline-queue.ts; this filter is the belt-and-suspenders so a stale
+    // cache row left behind by a bug can't double-count the same payment.
     let cashFromServer: Array<{ amount: number }> = [];
     if (isOnline) {
       const { data } = await supabase
@@ -232,10 +235,22 @@ export default function CashCollectionPage({
         .eq("billing_cycle_id", cycle.id);
       cashFromServer = (data ?? []).map((p: any) => ({ amount: Number(p.amount) }));
     }
-    const localCash = await db.cashPaymentsCache
+    const cachedRows = await db.cashPaymentsCache
       .where("[member_id+billing_cycle_id]")
       .equals([member.id, cycle.id])
       .toArray();
+
+    // Only credit cache rows whose corresponding offlineCashPayments entry
+    // is still pending — anything else already made it server-side.
+    const pendingOfflineIds = new Set(
+      (
+        await db.offlineCashPayments
+          .where("status")
+          .equals("pending")
+          .toArray()
+      ).map((p) => p.id)
+    );
+    const localCash = cachedRows.filter((r) => pendingOfflineIds.has(r.id));
 
     const totalCashPaid =
       cashFromServer.reduce((s, p) => s + p.amount, 0) +

@@ -288,6 +288,15 @@ export function useOfflineQueue(onReconnect?: (cb: () => void) => () => void) {
             status: "synced",
             syncedAt: new Date(),
           });
+
+          // Drop the local mirror so loadBill doesn't double-count this
+          // payment (server now has the row; local cache was only meant to
+          // tide us over until sync).
+          try {
+            await db.cashPaymentsCache.delete(payment.id);
+          } catch (err) {
+            console.warn("[sync] failed to clear cashPaymentsCache row", payment.id, err);
+          }
         } catch (err) {
           console.error("[sync] Cash payment network error:", err);
           await db.offlineCashPayments.update(payment.id, {

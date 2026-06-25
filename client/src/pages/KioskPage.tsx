@@ -388,7 +388,7 @@ export default function KioskPage() {
               PDCA
             </span>
             <span className="text-stone-300 text-[9px] font-medium leading-none mt-0.5" data-testid="text-app-version">
-              v1.8.4
+              v1.8.5
             </span>
             <div className="relative" ref={syncPopupRef}>
               <button
