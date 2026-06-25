@@ -33,6 +33,15 @@ interface MemberLite {
   is_active: boolean;
 }
 
+interface RecordedPayment {
+  id: string;
+  amount: number;
+  payment_type: string;
+  notes: string | null;
+  created_at: string;
+  collected_by_member_id: string | null;
+}
+
 interface BillData {
   invoiceId: string | null;
   invoiceTotal: number;
@@ -41,6 +50,7 @@ interface BillData {
   amountOwed: number;
   businessBreakdown: Array<{ name: string; total: number; transactions: number }>;
   transactionCount: number;
+  recordedPayments: RecordedPayment[];
 }
 
 interface BillingCycle {
@@ -98,6 +108,8 @@ export default function CashCollectionPage({
   const [amountReceived, setAmountReceived] = useState("");
 
   const [editingPin, setEditingPin] = useState(false);
+  const [editingPaymentId, setEditingPaymentId] = useState<string | null>(null);
+  const [editingPaymentAmount, setEditingPaymentAmount] = useState("");
   const [newPin, setNewPin] = useState("");
   const [pinSaving, setPinSaving] = useState(false);
 
@@ -222,18 +234,38 @@ export default function CashCollectionPage({
       invoiceTotal = Number(data?.total_amount ?? 0);
     }
 
-    // Cash payments — server-of-record plus any locally-queued ones that
-    // haven't synced yet. After a successful sync we drop the cache row in
-    // use-offline-queue.ts; this filter is the belt-and-suspenders so a stale
-    // cache row left behind by a bug can't double-count the same payment.
-    let cashFromServer: Array<{ amount: number }> = [];
+    // Cash payments — server-of-record (active only — voided rows are
+    // excluded so the collector's mistake correction sticks) plus any
+    // locally-queued ones that haven't synced yet. After a successful sync
+    // we drop the cache row in use-offline-queue.ts; the filter below is
+    // belt-and-suspenders so a stale cache row left behind by a bug can't
+    // double-count the same payment.
+    let cashFromServer: Array<{
+      id: string;
+      amount: number;
+      payment_type: string;
+      notes: string | null;
+      created_at: string;
+      collected_by_member_id: string | null;
+    }> = [];
     if (isOnline) {
       const { data } = await supabase
         .from("cash_payments")
-        .select("amount")
+        .select(
+          "id, amount, payment_type, notes, created_at, collected_by_member_id"
+        )
         .eq("member_id", member.id)
-        .eq("billing_cycle_id", cycle.id);
-      cashFromServer = (data ?? []).map((p: any) => ({ amount: Number(p.amount) }));
+        .eq("billing_cycle_id", cycle.id)
+        .is("voided_at", null)
+        .order("created_at", { ascending: false });
+      cashFromServer = (data ?? []).map((p: any) => ({
+        id: p.id,
+        amount: Number(p.amount),
+        payment_type: p.payment_type,
+        notes: p.notes,
+        created_at: p.created_at,
+        collected_by_member_id: p.collected_by_member_id,
+      }));
     }
     const cachedRows = await db.cashPaymentsCache
       .where("[member_id+billing_cycle_id]")
@@ -281,7 +313,40 @@ export default function CashCollectionPage({
       amountOwed,
       businessBreakdown: Object.values(businessBreakdown),
       transactionCount: transactions.length,
+      recordedPayments: cashFromServer,
     };
+  }
+
+  async function voidRecordedPayment(paymentId: string) {
+    if (!selectedMember || !lastClosedCycle) return;
+    const { error } = await supabase.rpc("void_cash_payment", {
+      p_cash_payment_id: paymentId,
+      p_actor_member_id: collector.id,
+      p_reason: "Voided from kiosk",
+    });
+    if (error) {
+      alert("Could not void payment: " + error.message);
+      return;
+    }
+    // Reload the bill so totals reflect the void.
+    const refreshed = await loadBill(selectedMember, lastClosedCycle);
+    setBillData(refreshed);
+  }
+
+  async function editRecordedPayment(paymentId: string, newAmount: number) {
+    if (!selectedMember || !lastClosedCycle) return;
+    if (!newAmount || newAmount <= 0) return;
+    const { error } = await supabase.rpc("edit_cash_payment", {
+      p_cash_payment_id: paymentId,
+      p_new_amount: newAmount,
+      p_actor_member_id: collector.id,
+    });
+    if (error) {
+      alert("Could not edit payment: " + error.message);
+      return;
+    }
+    const refreshed = await loadBill(selectedMember, lastClosedCycle);
+    setBillData(refreshed);
   }
 
   async function selectMember(member: MemberLite) {
@@ -741,6 +806,127 @@ export default function CashCollectionPage({
                           <p className="font-bold text-stone-900">₪{biz.total.toFixed(2)}</p>
                         </div>
                       ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {billData.recordedPayments.length > 0 && (
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="flex items-center gap-2 text-stone-500 text-sm mb-3">
+                      <Banknote className="w-4 h-4" />
+                      <span>
+                        Recorded Payments ({billData.recordedPayments.length})
+                      </span>
+                    </div>
+                    <div className="space-y-2">
+                      {billData.recordedPayments.map((p) => {
+                        const minePayment = p.collected_by_member_id === collector.id;
+                        const isEditing = editingPaymentId === p.id;
+                        return (
+                          <div
+                            key={p.id}
+                            className="flex items-center justify-between py-2 border-b border-stone-100 last:border-0 gap-2"
+                          >
+                            <div className="min-w-0 flex-1">
+                              {isEditing ? (
+                                <div className="flex items-center gap-2">
+                                  <Input
+                                    type="number"
+                                    value={editingPaymentAmount}
+                                    onChange={(e) =>
+                                      setEditingPaymentAmount(e.target.value)
+                                    }
+                                    className="h-9 w-28 font-mono"
+                                    autoFocus
+                                  />
+                                  <Button
+                                    size="sm"
+                                    onClick={async () => {
+                                      await editRecordedPayment(
+                                        p.id,
+                                        Number.parseFloat(editingPaymentAmount)
+                                      );
+                                      setEditingPaymentId(null);
+                                      setEditingPaymentAmount("");
+                                    }}
+                                    disabled={
+                                      !editingPaymentAmount ||
+                                      Number.parseFloat(editingPaymentAmount) <= 0
+                                    }
+                                    className="h-9 px-2"
+                                  >
+                                    <Check className="w-4 h-4" />
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => {
+                                      setEditingPaymentId(null);
+                                      setEditingPaymentAmount("");
+                                    }}
+                                    className="h-9 px-2"
+                                  >
+                                    <X className="w-4 h-4" />
+                                  </Button>
+                                </div>
+                              ) : (
+                                <>
+                                  <p className="font-semibold text-stone-900 tabular-nums">
+                                    ₪{p.amount.toFixed(2)}
+                                    <span className="ml-2 text-xs font-normal text-stone-500 uppercase">
+                                      {p.payment_type}
+                                    </span>
+                                  </p>
+                                  <p className="text-xs text-stone-500">
+                                    {minePayment ? "by you" : "by another collector"} ·{" "}
+                                    {new Date(p.created_at).toLocaleString([], {
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                      day: "numeric",
+                                      month: "short",
+                                    })}
+                                  </p>
+                                </>
+                              )}
+                            </div>
+                            {!isEditing && minePayment && (
+                              <div className="flex items-center gap-1 shrink-0">
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => {
+                                    setEditingPaymentId(p.id);
+                                    setEditingPaymentAmount(p.amount.toFixed(2));
+                                  }}
+                                  className="h-9 px-2 text-stone-500 hover:text-stone-900"
+                                  title="Edit amount"
+                                >
+                                  <Edit3 className="w-4 h-4" />
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => {
+                                    if (
+                                      window.confirm(
+                                        `Delete ₪${p.amount.toFixed(2)} payment? This can't be undone from the tablet.`
+                                      )
+                                    ) {
+                                      voidRecordedPayment(p.id);
+                                    }
+                                  }}
+                                  className="h-9 px-2 text-red-600 hover:text-red-700"
+                                  title="Delete payment"
+                                >
+                                  <X className="w-5 h-5" />
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </CardContent>
                 </Card>
