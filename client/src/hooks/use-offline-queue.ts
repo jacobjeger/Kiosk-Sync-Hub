@@ -245,83 +245,43 @@ export function useOfflineQueue(onReconnect?: (cb: () => void) => () => void) {
           continue;
         }
         try {
-          // Resolve invoice_id if there is one — cash_payments has a nullable FK.
-          const { data: invoice } = await supabase
-            .from("invoices")
-            .select("id, total_amount")
-            .eq("member_id", payment.memberId)
-            .eq("billing_cycle_id", payment.billingCycleId)
-            .maybeSingle();
-
-          const row: Record<string, unknown> = {
-            invoice_id: invoice?.id ?? null,
-            member_id: payment.memberId,
-            billing_cycle_id: payment.billingCycleId,
-            amount: payment.amount,
-            collected_by_member_id: payment.collectorMemberId,
-            collected_by_admin_id: null,
-            payment_type: payment.paymentType,
-            notes: payment.notes,
-            client_payment_id: payment.clientPaymentId,
-          };
-
-          let insertError: any = null;
-          const firstInsert = await supabase.from("cash_payments").insert(row);
-          insertError = firstInsert.error;
-
-          // If the column doesn't exist yet, retry without it. Server then dedupes nothing,
-          // but with `maybeSingle()` above we'd have inserted only once anyway under happy-path.
-          if (insertError) {
-            const msg = (insertError.message || "").toString();
-            const code = (insertError.code || "").toString();
-            if (
-              code === "42703" ||
-              code === "PGRST204" ||
-              msg.includes("client_payment_id")
-            ) {
-              console.warn(
-                "[sync] cash_payments.client_payment_id column missing; retrying without it. Apply scripts/add-cash-payment-client-id.sql in Supabase."
-              );
-              delete (row as any).client_payment_id;
-              const retry = await supabase.from("cash_payments").insert(row);
-              insertError = retry.error;
-            } else if (code === "23505") {
-              // Unique violation on client_payment_id — already inserted on a prior retry.
-              insertError = null;
+          // Single atomic call: SECURITY DEFINER RPC handles both the
+          // cash_payments insert and the invoices status flip in one
+          // transaction. anon can call it; raw UPDATEs on invoices it can't.
+          // Idempotent via client_payment_id — safe to retry.
+          const { data, error: rpcError } = await supabase.rpc(
+            "record_kiosk_cash_payment",
+            {
+              p_member_id: payment.memberId,
+              p_billing_cycle_id: payment.billingCycleId,
+              p_amount: payment.amount,
+              p_collector_member_id: payment.collectorMemberId,
+              p_payment_type: payment.paymentType,
+              p_notes: payment.notes,
+              p_is_full_payment: payment.isFullPayment,
+              p_client_payment_id: payment.clientPaymentId,
             }
-          }
+          );
 
-          if (insertError) {
-            console.error("[sync] Cash payment insert error:", insertError);
+          if (rpcError) {
+            console.error("[sync] record_kiosk_cash_payment error:", rpcError);
+            // 42883 = function does not exist — RPC migration not yet applied.
+            // Surface a clear warning; the row stays pending and we'll retry.
+            const code = (rpcError.code || "").toString();
+            if (code === "42883" || (rpcError.message || "").includes("record_kiosk_cash_payment")) {
+              console.warn(
+                "[sync] record_kiosk_cash_payment RPC is missing. Apply scripts/add-record-kiosk-cash-payment-rpc.sql in Supabase. Payment will stay queued."
+              );
+            }
             await db.offlineCashPayments.update(payment.id, {
               retryCount: payment.retryCount + 1,
               status: payment.retryCount + 1 >= 10 ? "failed" : "pending",
             });
             continue;
           }
-
-          // Update invoice payment status — mirrors server-side recordCashPayment.
-          if (invoice?.id) {
-            const { data: paymentsAll } = await supabase
-              .from("cash_payments")
-              .select("amount")
-              .eq("invoice_id", invoice.id);
-            const totalPaid = (paymentsAll ?? []).reduce(
-              (sum, p) => sum + Number(p.amount),
-              0
-            );
-            const invoiceTotal = Number(invoice.total_amount || 0);
-            if (payment.isFullPayment || totalPaid >= invoiceTotal) {
-              await supabase
-                .from("invoices")
-                .update({ payment_status: "paid_cash", status: "paid_cash" })
-                .eq("id", invoice.id);
-            } else if (totalPaid > 0) {
-              await supabase
-                .from("invoices")
-                .update({ payment_status: "partial_cash", status: "partial_cash" })
-                .eq("id", invoice.id);
-            }
+          // data shape: { ok, cash_payment_id, invoice_id, total_paid, new_status, already_existed }
+          if (data && typeof data === "object" && (data as any).already_existed) {
+            console.log("[sync] cash payment already synced previously:", payment.id);
           }
 
           await db.offlineCashPayments.update(payment.id, {

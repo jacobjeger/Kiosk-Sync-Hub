@@ -76,6 +76,10 @@ export default function CashCollectionPage({
   queueCashPayment,
 }: Props) {
   const searchInputRef = useRef<HTMLInputElement>(null);
+  // Ref-based guard against double-tap on "Paid Full" / "Record Payment".
+  // setLoading is async via React state and won't disable the button before
+  // a second touch event fires on a tablet; the ref flips synchronously.
+  const submittingRef = useRef(false);
 
   const [step, setStep] = useState<CashStep>("search");
   const [searchQuery, setSearchQuery] = useState("");
@@ -279,12 +283,14 @@ export default function CashCollectionPage({
   }
 
   async function handlePayment(fullPayment: boolean) {
+    if (submittingRef.current) return;
     if (!selectedMember || !lastClosedCycle || !billData) return;
     const amount = fullPayment
       ? billData.amountOwed
       : Number.parseFloat(paymentAmount);
     if (!amount || amount <= 0) return;
 
+    submittingRef.current = true;
     setLoading(true);
     try {
       // Always go through the offline queue — it syncs immediately when online and
@@ -367,6 +373,7 @@ export default function CashCollectionPage({
     setAmountReceived("");
     setEditingPin(false);
     setNewPin("");
+    submittingRef.current = false;
     setTimeout(() => searchInputRef.current?.focus(), 100);
   }
 
