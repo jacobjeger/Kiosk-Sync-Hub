@@ -72,7 +72,7 @@ function network(): Record<string, unknown> {
 
 
 /** What this tablet is actually running, as the updater sees it. */
-async function runningBundle(): Promise<string | null> {
+export async function runningBundle(): Promise<string | null> {
   try {
     const current = await CapacitorUpdater.current();
     return current?.bundle?.version ?? null;

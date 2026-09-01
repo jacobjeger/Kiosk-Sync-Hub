@@ -31,6 +31,7 @@ import { lockDown } from "@/lib/lockdown";
 import { UnlockScreen } from "@/components/kiosk/unlock-screen";
 import { checkForUpdate } from "@/lib/ota-update";
 import { APP_VERSION } from "@/lib/version";
+import { runningBundle } from "@/lib/telemetry";
 import {
   ChevronLeft,
   AlertTriangle,
@@ -104,6 +105,14 @@ export default function KioskPage() {
 
   const { members, businesses, isLoading: dataLoading, refresh, isError } = useKioskData();
   const { isOnline, onReconnect } = useNetworkStatus();
+
+  /* The version on the chip is the OTA bundle, not APP_VERSION — that constant
+     is baked into the web build and cannot describe a tablet that has updated
+     since. Falls back to the constant on a build with no updater. */
+  const [shownVersion, setShownVersion] = useState(APP_VERSION);
+  useEffect(() => {
+    void runningBundle().then((v) => v && setShownVersion(v));
+  }, []);
   const { pendingCount, isSyncing, queueTransaction, syncAll } = useOfflineQueue(onReconnect);
 
   useEffect(() => {
@@ -471,7 +480,7 @@ export default function KioskPage() {
               data-testid="text-app-version"
               onClick={armUnlock}
             >
-              v{APP_VERSION}
+              v{shownVersion}
             </button>
             <div className="relative" ref={syncPopupRef}>
               <button
