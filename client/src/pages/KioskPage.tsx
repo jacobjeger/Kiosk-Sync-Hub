@@ -462,13 +462,17 @@ export default function KioskPage() {
                 the only route back to Wi-Fi settings once the tablet is locked
                 down — it has to be somewhere a member will not find and a
                 member of staff can be told about in one sentence. */}
-            <span
-              className="text-stone-300 text-[9px] font-medium leading-none mt-0.5 select-none"
+            {/* A 9px span was a ~30x12px tap target and five taps had to land
+                in ten seconds — in practice it did not work at all. The padding
+                makes it hittable without making it look like a control. */}
+            <button
+              type="button"
+              className="-m-2 p-2 text-stone-300 text-[9px] font-medium leading-none select-none"
               data-testid="text-app-version"
               onClick={armUnlock}
             >
               v{APP_VERSION}
-            </span>
+            </button>
             <div className="relative" ref={syncPopupRef}>
               <button
                 onClick={() => setShowSyncStatus(!showSyncStatus)}

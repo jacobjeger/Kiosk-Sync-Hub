@@ -145,6 +145,7 @@ export type CheckinResponse = {
 export async function checkin(body: {
   telemetry?: Record<string, unknown>;
   results?: { command_id: string; status: "done" | "failed"; result?: unknown; error?: string }[];
+  events?: { kind: string; detail?: Record<string, unknown> }[];
 }): Promise<ApiResult<CheckinResponse>> {
   const result = await apiFetch<CheckinResponse>("/api/kiosk/checkin", { body });
 

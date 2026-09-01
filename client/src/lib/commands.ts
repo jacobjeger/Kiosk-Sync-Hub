@@ -52,7 +52,19 @@ function setOnline(up: boolean) {
   listeners.forEach((fn) => fn(up));
 }
 let pendingResults: Result[] = [];
+let pendingEvents: { kind: string; detail?: Record<string, unknown> }[] = [];
 let onCheckUpdate: (() => void) | null = null;
+
+/**
+ * Tell the fleet page something happened here.
+ *
+ * Rides up on the next check-in rather than being posted when it occurs,
+ * because the things worth reporting — a reboot, a bundle swap — are exactly
+ * the moments the tablet is least able to make a request.
+ */
+export function reportEvent(kind: string, detail?: Record<string, unknown>) {
+  pendingEvents.push({ kind, detail });
+}
 
 /** The OTA check is owned elsewhere; this is how a command reaches it. */
 export function setUpdateChecker(fn: () => void) {
@@ -150,6 +162,20 @@ async function execute(command: Command): Promise<Result> {
   }
 }
 
+/**
+ * Push queued events now.
+ *
+ * Used before a bundle swap, which throws this context away — the report has to
+ * be in flight before the thing it reports on happens.
+ */
+export async function flushEvents(): Promise<void> {
+  if (pendingEvents.length === 0) return;
+  const events = pendingEvents;
+  pendingEvents = [];
+  const sent = await checkin({ events });
+  if (!sent.ok) pendingEvents = events.concat(pendingEvents);
+}
+
 /** Send results now, without waiting for the next scheduled beat. */
 async function flush(): Promise<void> {
   if (pendingResults.length === 0) return;
@@ -164,10 +190,14 @@ export async function beat(): Promise<void> {
   const results = pendingResults;
   pendingResults = [];
 
-  const response = await checkin({ telemetry: await telemetry(), results });
+  const events = pendingEvents;
+  pendingEvents = [];
+
+  const response = await checkin({ telemetry: await telemetry(), results, events });
 
   if (!response.ok) {
     pendingResults = results.concat(pendingResults);
+    pendingEvents = events.concat(pendingEvents);
     failures += 1;
     /* One failure is a blip; the kiosk should not start queueing sales because
        a single request was dropped. Two in a row is a network. */

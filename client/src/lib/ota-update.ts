@@ -20,6 +20,7 @@
 
 import { CapacitorUpdater } from "@capgo/capacitor-updater";
 import { setKioskVersion } from "./error-reporter";
+import { reportEvent, flushEvents } from "@/lib/commands";
 
 const MANIFEST_URL = "https://tcpdca.com/api/kiosk-update/manifest";
 const UPDATE_POLL_INTERVAL_MS = 15 * 60 * 1000;        // 15 minutes
@@ -90,6 +91,15 @@ export async function checkForUpdate(): Promise<void> {
     // so we don't reload mid-transaction.
     await waitUntilIdle();
     console.log("[ota] activating bundle:", next.id);
+    /* Report it before applying. A bundle swap replaces this context, and a
+       *downgrade* is the case worth surfacing: a stale published manifest will
+       happily replace a freshly installed APK's bundle with an older one and
+       say nothing, which is precisely what happened the first time a tablet was
+       provisioned. It is not a bug in the update logic — publishing an older
+       version is how a rollback is done — but it should never again be silent. */
+    reportEvent("bundle_changed", { from: current.bundle?.version ?? null, to: manifest.version });
+    await flushEvents();
+
     await CapacitorUpdater.set({ id: next.id });
   } catch (err) {
     console.warn("[ota] update check failed:", err);
