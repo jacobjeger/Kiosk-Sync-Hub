@@ -24,6 +24,26 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!--
+              Also the home screen, so the till comes back by itself.
+
+              A BOOT_COMPLETED receiver is not enough on its own: Android 10 and
+              later refuse to let a background receiver start an activity, so
+              after a power cut the tablet booted to the stock Lenovo launcher
+              and stayed there until somebody walked over and tapped the app.
+              Being HOME is what makes the kiosk the thing the device returns
+              to: on boot, and every time Home is pressed.
+
+              The device owner pins this as the persistent preferred activity
+              (see setKioskPolicy), so no chooser appears and the choice
+              cannot be changed from Settings.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+
         </activity>
 
         <!--

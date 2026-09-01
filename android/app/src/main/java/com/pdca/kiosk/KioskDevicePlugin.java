@@ -100,6 +100,19 @@ public class KioskDevicePlugin extends Plugin {
         }
     }
 
+
+    /** What the system says, not what we last asked for. */
+    private boolean inLockTask() {
+        try {
+            android.app.ActivityManager am = (android.app.ActivityManager)
+                    getContext().getSystemService(Context.ACTIVITY_SERVICE);
+            return am != null
+                    && am.getLockTaskModeState() != android.app.ActivityManager.LOCK_TASK_MODE_NONE;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     /** Absent capability, stated plainly. Never an exception — this is expected. */
     private void notOwner(PluginCall call) {
         JSObject out = new JSObject();
@@ -295,13 +308,28 @@ public class KioskDevicePlugin extends Plugin {
             call.reject("No activity");
             return;
         }
-        activity.runOnUiThread(() -> {
-            try {
-                activity.stopLockTask();
-            } catch (Exception e) {
-                Log.w(TAG, "stopLockTask failed: " + e.getMessage());
-            }
-        });
+        /* Run it and wait, rather than firing at the UI thread and reporting
+           success regardless. This resolved ok:true even when the call threw,
+           so the fleet page showed a tablet as unlocked while it was still
+           locked -- the one thing this result is consulted for. */
+        final boolean[] threw = {false};
+        try {
+            final java.util.concurrent.CountDownLatch done =
+                    new java.util.concurrent.CountDownLatch(1);
+            activity.runOnUiThread(() -> {
+                try {
+                    activity.stopLockTask();
+                } catch (Exception e) {
+                    threw[0] = true;
+                    Log.w(TAG, "stopLockTask failed: " + e.getMessage());
+                } finally {
+                    done.countDown();
+                }
+            });
+            done.await(3, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
 
         // The status bar comes back with it. Leaving it disabled would mean
         // unlocking the app but still not reaching Wi-Fi settings, which is the
@@ -314,7 +342,23 @@ public class KioskDevicePlugin extends Plugin {
             }
         }
 
-        call.resolve(new JSObject().put("ok", true));
+        /* Ask the system what the state actually is, and clear the allowlist
+           only once we are genuinely out. Clearing it while still locked is how
+           this tablet ended up LOCKED with an empty mLockTaskPackages -- a state
+           nothing on the device can then leave. */
+        boolean stillLocked = inLockTask();
+        if (!stillLocked && isOwner()) {
+            try {
+                dpm().setLockTaskPackages(admin(), new String[]{});
+            } catch (Exception e) {
+                Log.w(TAG, "Could not clear lock task packages: " + e.getMessage());
+            }
+        }
+
+        JSObject out = new JSObject();
+        out.put("ok", !stillLocked && !threw[0]);
+        if (stillLocked) out.put("reason", "still_in_lock_task");
+        call.resolve(out);
     }
 
     private static boolean constantTimeEquals(String a, String b) {
@@ -351,6 +395,32 @@ public class KioskDevicePlugin extends Plugin {
                     ? new String[]{getContext().getPackageName()}
                     : new String[]{});
             applied.put("lockTaskPackages", true);
+
+            /* Be the home screen, so the till comes back on its own.
+
+               The BOOT_COMPLETED receiver cannot do this alone: Android 10+
+               refuses to let a background receiver start an activity, so after
+               a power cut the tablet sat on the stock launcher until someone
+               walked over. Pinning this as the persistent preferred activity
+               also means no chooser and no way to change it from Settings --
+               and pressing Home returns here rather than leaving the kiosk. */
+            try {
+                IntentFilter home = new IntentFilter(Intent.ACTION_MAIN);
+                home.addCategory(Intent.CATEGORY_HOME);
+                home.addCategory(Intent.CATEGORY_DEFAULT);
+                if (enable) {
+                    dpm.addPersistentPreferredActivity(admin, home,
+                            new ComponentName(getContext(), MainActivity.class));
+                } else {
+                    // Clearing is by package, and only ours is ever set here.
+                    dpm.clearPackagePersistentPreferredActivities(
+                            admin, getContext().getPackageName());
+                }
+                applied.put("homeLauncher", true);
+            } catch (Exception e) {
+                Log.w(TAG, "Could not set the home activity: " + e.getMessage());
+                applied.put("homeLauncher", false);
+            }
 
             dpm.setStatusBarDisabled(admin, enable);
             applied.put("statusBar", true);
@@ -571,22 +641,35 @@ public class KioskDevicePlugin extends Plugin {
         if (percent == null) { call.reject("percent is required"); return; }
         if (!isOwner()) { notOwner(call); return; }
 
+        /* setSystemSetting, not Settings.System.putInt.
+           WRITE_SETTINGS is an appop-gated special permission: declaring it in
+           the manifest grants nothing, setPermissionGrantState does not cover
+           it, and the only ways in are a human visiting Settings -- impossible
+           on a locked till -- or adb. Verified on the tablet: granted=false.
+           setSystemSetting is the device-owner route to the same values and
+           needs no grant at all. */
         try {
             int value = Math.round(255 * Math.max(0, Math.min(100, percent)) / 100f);
-            Settings.System.putInt(getContext().getContentResolver(),
-                    Settings.System.SCREEN_BRIGHTNESS_MODE,
-                    Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL);
-            Settings.System.putInt(getContext().getContentResolver(),
-                    Settings.System.SCREEN_BRIGHTNESS, value);
+            DevicePolicyManager dpm = dpm();
+            ComponentName admin = admin();
+
+            // Manual first: on automatic, the system overwrites whatever is set
+            // here at the next light-sensor reading and the change looks like it
+            // silently failed.
+            dpm.setSystemSetting(admin, Settings.System.SCREEN_BRIGHTNESS_MODE,
+                    String.valueOf(Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL));
+            dpm.setSystemSetting(admin, Settings.System.SCREEN_BRIGHTNESS,
+                    String.valueOf(value));
 
             JSObject out = new JSObject();
             out.put("ok", true);
             out.put("brightness", value);
             call.resolve(out);
         } catch (Exception e) {
+            Log.w(TAG, "setBrightness failed: " + e.getMessage());
             JSObject out = new JSObject();
             out.put("ok", false);
-            out.put("reason", "write_settings_denied");
+            out.put("reason", e.getMessage() == null ? "refused" : e.getMessage());
             call.resolve(out);
         }
     }
