@@ -44,6 +44,8 @@ export interface KioskDevicePlugin {
   reboot(): Promise<NativeResult>;
   markCommandExecuted(o: { commandId: string }): Promise<{ ok: boolean }>;
   wasCommandExecuted(o: { commandId: string }): Promise<{ executed: boolean }>;
+  installCaCert(o: { certificate: string }): Promise<NativeResult & { already?: boolean }>;
+  installBundledCa(): Promise<NativeResult & { already?: boolean }>;
   unenroll(o: { pin: string }): Promise<NativeResult>;
 }
 

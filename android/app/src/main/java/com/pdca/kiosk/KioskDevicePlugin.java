@@ -453,6 +453,139 @@ public class KioskDevicePlugin extends Plugin {
     }
 
     /* -----------------------------------------------------------------------
+     * Certificates
+     * -------------------------------------------------------------------- */
+
+    /**
+     * Trust the network's CA before anything tries to use the network.
+     *
+     * These tablets sit behind a filter that re-signs TLS. Until its authority
+     * is trusted the device cannot make an HTTPS request at all — which
+     * includes the request that would have told it to trust the authority.
+     * Chicken and egg, and the reason the certificate ships inside the APK
+     * rather than being pushed: a tablet has to be able to bootstrap itself
+     * from a factory reset with nothing but the installer.
+     *
+     * Run from load(), so it happens during bridge init and before the web
+     * layer makes its first call.
+     *
+     * Worth being plain about what this costs. Trusting this CA means whoever
+     * holds its key can read this device's traffic. That is already true of the
+     * network these tablets are on and they cannot work without it; what
+     * changes is that the tablet stops refusing to talk. It is installed only
+     * when the app is device owner, so it is scoped to a device somebody
+     * deliberately provisioned.
+     */
+    @Override
+    public void load() {
+        super.load();
+        try {
+            if (!isOwner()) return;
+            byte[] der = readBundledCa();
+            if (der == null) return;
+            if (dpm().hasCaCertInstalled(admin(), der)) return;
+            boolean ok = dpm().installCaCert(admin(), der);
+            Log.i(TAG, ok ? "Network CA installed" : "Network CA rejected by the platform");
+        } catch (Exception e) {
+            // Never fatal: a tablet that cannot install the CA is one that
+            // cannot reach the server, which is visible everywhere else.
+            Log.w(TAG, "Could not install the bundled CA: " + e.getMessage());
+        }
+    }
+
+    private byte[] readBundledCa() {
+        try (java.io.InputStream in =
+                     getContext().getResources().openRawResource(R.raw.network_ca)) {
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            return out.toByteArray();
+        } catch (Exception e) {
+            Log.w(TAG, "No bundled CA: " + e.getMessage());
+            return null;
+        }
+    }
+
+    /** Re-run the bundled install by hand, for a tablet provisioned out of order. */
+    @PluginMethod
+    public void installBundledCa(PluginCall call) {
+        if (!isOwner()) {
+            notOwner(call);
+            return;
+        }
+        byte[] der = readBundledCa();
+        if (der == null) {
+            call.resolve(new JSObject().put("ok", false).put("reason", "no bundled certificate"));
+            return;
+        }
+        try {
+            JSObject out = new JSObject();
+            if (dpm().hasCaCertInstalled(admin(), der)) {
+                out.put("ok", true).put("already", true);
+            } else {
+                out.put("ok", dpm().installCaCert(admin(), der));
+            }
+            call.resolve(out);
+        } catch (Exception e) {
+            call.resolve(new JSObject().put("ok", false).put("reason", e.getMessage()));
+        }
+    }
+
+    /**
+     * Trust a certificate authority, fleet-wide.
+     *
+     * A device owner can install a CA without the user-facing prompt and
+     * without a screen lock being set, which is the whole reason this exists:
+     * these tablets sit on a filtered network that re-signs TLS, and until its
+     * CA is trusted the tablet cannot reach the server at all — including to be
+     * told to trust it. Chicken and egg, so it also has to work from a local
+     * call, not only from a pushed command.
+     *
+     * Installing a CA means whoever holds its key can read this device's
+     * traffic. That is already true of the network the tablet is on; what this
+     * changes is that the tablet stops refusing to talk.
+     */
+    @PluginMethod
+    public void installCaCert(PluginCall call) {
+        if (!isOwner()) {
+            notOwner(call);
+            return;
+        }
+        String pem = call.getString("certificate");
+        if (pem == null || pem.isEmpty()) {
+            call.reject("certificate (PEM) is required");
+            return;
+        }
+        try {
+            /* PEM or bare base64 DER — the caller should not have to care, and
+               the file on disk turned out to be DER the first time this ran. */
+            byte[] der = android.util.Base64.decode(
+                    pem.replaceAll("-----[A-Z ]+-----", "").replaceAll("\\s", ""),
+                    android.util.Base64.DEFAULT);
+
+            if (dpm().hasCaCertInstalled(admin(), der)) {
+                JSObject out = new JSObject();
+                out.put("ok", true);
+                out.put("already", true);
+                call.resolve(out);
+                return;
+            }
+
+            boolean installed = dpm().installCaCert(admin(), der);
+            JSObject out = new JSObject();
+            out.put("ok", installed);
+            if (!installed) out.put("reason", "rejected by the platform");
+            call.resolve(out);
+        } catch (Exception e) {
+            JSObject out = new JSObject();
+            out.put("ok", false);
+            out.put("reason", e.getMessage());
+            call.resolve(out);
+        }
+    }
+
+    /* -----------------------------------------------------------------------
      * Getting out
      * -------------------------------------------------------------------- */
 

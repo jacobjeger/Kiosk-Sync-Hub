@@ -105,6 +105,25 @@ async function execute(command: Command): Promise<Result> {
             };
       }
 
+      case "install_ca": {
+        /* Certificates are pushed rather than only bundled because a CA
+           outlives an APK release: it expires, or the filter behind it is
+           replaced. Idempotent on the device — installing one already present
+           reports `already` and changes nothing. */
+        const cert = String(command.payload?.certificate ?? "");
+        if (!cert) {
+          return { command_id: command.id, status: "failed", error: "no certificate" };
+        }
+        const out = await tryNative((p) => p.installCaCert({ certificate: cert }));
+        return out?.ok
+          ? { command_id: command.id, status: "done", result: out }
+          : {
+              command_id: command.id,
+              status: "failed",
+              error: out?.reason ?? "not available on this build",
+            };
+      }
+
       case "reboot": {
         if (!available()) {
           return { command_id: command.id, status: "failed", error: "not_device_owner" };
