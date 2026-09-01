@@ -4,6 +4,8 @@ import { setConfig } from "@/lib/config";
 import { markBundleHealthy } from "@/lib/ota-update";
 import { tryNative, available } from "@/lib/kiosk-device";
 import { setBundleVersion } from "@/lib/version";
+import { getIdentity } from "@/lib/device";
+import { reconcile } from "@/lib/lockdown";
 
 /**
  * Calling home.
@@ -86,9 +88,14 @@ async function execute(command: Command): Promise<Result> {
 
       case "set_lock_task": {
         const enable = command.payload?.enable !== false;
+        /* The PIN comes from the tablet's own store, never the command payload.
+           The server already sends it on every check-in, and keeping it out of
+           command rows means a queue of instructions is not also a list of
+           every tablet's unlock code. */
+        const identity = await getIdentity();
         const out = enable
           ? await tryNative((p) => p.startLockTask())
-          : await tryNative((p) => p.stopLockTask({ pin: String(command.payload?.pin ?? "") }));
+          : await tryNative((p) => p.stopLockTask({ pin: identity.escapePin ?? "" }));
         return out?.ok
           ? { command_id: command.id, status: "done", result: out }
           : {
@@ -158,6 +165,14 @@ export async function beat(): Promise<void> {
 
   if (response.data.settings) setConfig(response.data.settings);
   if (response.data.update?.version) setBundleVersion(response.data.update.version);
+
+  /* Put the tablet where it is supposed to be, every time. This is what makes
+     "lock" and "unlock" from the portal work on a device that was offline when
+     the button was pressed, and what re-locks a tablet somebody unlocked and
+     walked away from. */
+  if (response.data.lock_policy) {
+    await reconcile(response.data.lock_policy, (await getIdentity()).escapePin);
+  }
 
   for (const command of response.data.commands ?? []) {
     pendingResults.push(await execute(command as Command));

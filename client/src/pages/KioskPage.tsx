@@ -63,6 +63,9 @@ export default function KioskPage() {
   /* The way out. Deliberately not a button — a visible "exit kiosk" control on
      a canteen till is an invitation. Five taps on the clock in ten seconds. */
   const [unlocking, setUnlocking] = useState(false);
+  /* Shown while the tablet is out of kiosk mode, so whoever unlocked it can put
+     it back without waiting out the grace window or restarting the app. */
+  const [unlocked, setUnlocked] = useState(false);
   const escapeTaps = useRef<number[]>([]);
 
   const armUnlock = useCallback(() => {
@@ -92,6 +95,12 @@ export default function KioskPage() {
     if (!enrolled) return;
     void getIdentity().then((id) => lockDown(id.escapePin));
   }, [enrolled]);
+
+  const relock = useCallback(async () => {
+    const id = await getIdentity();
+    await lockDown(id.escapePin);
+    setUnlocked(false);
+  }, []);
 
   const { members, businesses, isLoading: dataLoading, refresh, isError } = useKioskData();
   const { isOnline, onReconnect } = useNetworkStatus();
@@ -309,7 +318,15 @@ export default function KioskPage() {
   /* Before the roster, before anything. The tablet cannot fetch members, take a
      sale or file a crash report until it can prove which device it is. */
   if (unlocking) {
-    return <UnlockScreen onUnlocked={() => setUnlocking(false)} onCancel={() => setUnlocking(false)} />;
+    return (
+      <UnlockScreen
+        onUnlocked={() => {
+          setUnlocking(false);
+          setUnlocked(true);
+        }}
+        onCancel={() => setUnlocking(false)}
+      />
+    );
   }
 
   if (enrolled === null) {
@@ -339,6 +356,19 @@ export default function KioskPage() {
 
   return (
     <div className="min-h-screen bg-stone-50 flex flex-col select-none">
+      {/* Visible only while the tablet is out of kiosk mode. It is the way back
+          in without waiting out the grace window, and — more usefully — it is
+          the thing that tells whoever walks past that this till is not locked,
+          which is otherwise easy to miss. */}
+      {unlocked && (
+        <button
+          onClick={() => void relock()}
+          className="w-full bg-amber-500 py-2 text-center text-sm font-semibold text-white"
+        >
+          This tablet is unlocked — tap to lock it again
+        </button>
+      )}
+
       {showIdleWarning && (
         <IdleOverlay countdown={idleCountdown} onContinue={resetIdleTimer} />
       )}

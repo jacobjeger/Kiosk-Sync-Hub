@@ -128,6 +128,8 @@ export type CheckinResponse = {
   update: { version: string; url: string; checksum?: string } | null;
   commands: { id: string; kind: string; payload: Record<string, unknown> }[];
   escape_pin: string | null;
+  /** "locked" or "unlocked" — what this tablet should be doing. */
+  lock_policy: string;
   settings: Record<string, unknown>;
 };
 
