@@ -27,7 +27,10 @@ import { setActiveMember, setSessionContext } from "@/lib/error-reporter";
 import { EnrollmentScreen } from "@/components/kiosk/enrollment-screen";
 import { getIdentity } from "@/lib/device";
 import { startCheckins, setUpdateChecker } from "@/lib/commands";
+import { lockDown } from "@/lib/lockdown";
+import { UnlockScreen } from "@/components/kiosk/unlock-screen";
 import { checkForUpdate } from "@/lib/ota-update";
+import { APP_VERSION } from "@/lib/version";
 import {
   ChevronLeft,
   AlertTriangle,
@@ -57,6 +60,19 @@ export default function KioskPage() {
      crash reports all authenticate as this device. So enrollment gates the
      whole screen rather than being a setting somewhere inside it. */
   const [enrolled, setEnrolled] = useState<boolean | null>(null);
+  /* The way out. Deliberately not a button — a visible "exit kiosk" control on
+     a canteen till is an invitation. Five taps on the clock in ten seconds. */
+  const [unlocking, setUnlocking] = useState(false);
+  const escapeTaps = useRef<number[]>([]);
+
+  const armUnlock = useCallback(() => {
+    const now = Date.now();
+    escapeTaps.current = [...escapeTaps.current, now].filter((t) => now - t < 10_000);
+    if (escapeTaps.current.length >= 5) {
+      escapeTaps.current = [];
+      setUnlocking(true);
+    }
+  }, []);
 
   useEffect(() => {
     void getIdentity().then((id) => setEnrolled(Boolean(id.deviceId && id.deviceSecret)));
@@ -67,6 +83,14 @@ export default function KioskPage() {
     if (!enrolled) return;
     setUpdateChecker(() => void checkForUpdate());
     return startCheckins();
+  }, [enrolled]);
+
+  /* Lock the tablet to the app once it is enrolled and has an escape PIN.
+     Both conditions matter: locking a device with no way out means the next
+     Wi-Fi change costs a factory reset. */
+  useEffect(() => {
+    if (!enrolled) return;
+    void getIdentity().then((id) => lockDown(id.escapePin));
   }, [enrolled]);
 
   const { members, businesses, isLoading: dataLoading, refresh, isError } = useKioskData();
@@ -284,6 +308,10 @@ export default function KioskPage() {
 
   /* Before the roster, before anything. The tablet cannot fetch members, take a
      sale or file a crash report until it can prove which device it is. */
+  if (unlocking) {
+    return <UnlockScreen onUnlocked={() => setUnlocking(false)} onCancel={() => setUnlocking(false)} />;
+  }
+
   if (enrolled === null) {
     return (
       <div className="min-h-screen bg-stone-50 flex items-center justify-center">
@@ -398,8 +426,18 @@ export default function KioskPage() {
             <span className="text-stone-900 text-base font-bold tracking-tight">
               PDCA
             </span>
-            <span className="text-stone-300 text-[9px] font-medium leading-none mt-0.5" data-testid="text-app-version">
-              v1.8.6
+            {/* The escape hatch. Five taps in ten seconds opens the PIN prompt.
+                Hidden on the version chip because a labelled "exit kiosk"
+                button on a canteen till is an invitation, and because this is
+                the only route back to Wi-Fi settings once the tablet is locked
+                down — it has to be somewhere a member will not find and a
+                member of staff can be told about in one sentence. */}
+            <span
+              className="text-stone-300 text-[9px] font-medium leading-none mt-0.5 select-none"
+              data-testid="text-app-version"
+              onClick={armUnlock}
+            >
+              v{APP_VERSION}
             </span>
             <div className="relative" ref={syncPopupRef}>
               <button
