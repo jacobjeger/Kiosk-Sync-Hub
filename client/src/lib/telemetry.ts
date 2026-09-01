@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { tryNative } from "@/lib/kiosk-device";
-import { APP_VERSION, currentBundleVersion } from "@/lib/version";
+import { APP_VERSION } from "@/lib/version";
+import { CapacitorUpdater } from "@capgo/capacitor-updater";
 
 /**
  * What the tablet says about itself on every check-in.
@@ -23,7 +24,11 @@ export async function telemetry(): Promise<Record<string, unknown>> {
 
   return {
     app_version: APP_VERSION,
-    bundle_version: currentBundleVersion(),
+    /* Asked of the updater, not of what the server last advertised. Those are
+       different numbers precisely when it matters: a tablet that downgraded
+       itself is running one thing and being told about another, and the fleet
+       page has to show the first. */
+    bundle_version: await runningBundle(),
     android_release: status?.androidRelease ?? null,
     model: status?.model ?? null,
     battery_pct: status && status.batteryPct >= 0 ? status.batteryPct : null,
@@ -63,4 +68,15 @@ function network(): Record<string, unknown> {
     network_downlink: typeof c.downlink === "number" ? c.downlink : null,
     network_rtt_ms: typeof c.rtt === "number" ? c.rtt : null,
   };
+}
+
+
+/** What this tablet is actually running, as the updater sees it. */
+async function runningBundle(): Promise<string | null> {
+  try {
+    const current = await CapacitorUpdater.current();
+    return current?.bundle?.version ?? null;
+  } catch {
+    return null;
+  }
 }
