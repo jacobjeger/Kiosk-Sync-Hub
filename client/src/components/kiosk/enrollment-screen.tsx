@@ -35,9 +35,12 @@ export function EnrollmentScreen({ onEnrolled }: { onEnrolled: (label: string) =
     setBusy(false);
 
     if (!result.ok) {
+      /* "Failed to fetch" is what a browser says for a dead network, a blocked
+         request and an untrusted certificate alike, so the message names the
+         things a person standing at the tablet can actually check. */
       setError(
         result.kind === "network"
-          ? "Could not reach the server. Check the tablet is on Wi-Fi."
+          ? "Could not reach the server. Check Wi-Fi, and that this network does not filter secure connections."
           : result.error
       );
       setCode("");

@@ -31,8 +31,6 @@ self.addEventListener("fetch", (event) => {
 
   if (request.method !== "GET") return;
 
-  if (request.url.includes("supabase.co")) return;
-
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
