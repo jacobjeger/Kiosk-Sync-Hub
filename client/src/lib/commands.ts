@@ -24,6 +24,31 @@ type Result = { command_id: string; status: "done" | "failed"; result?: unknown;
 
 let failures = 0;
 let timer: ReturnType<typeof setTimeout> | null = null;
+
+/* Whether the last check-in reached the server.
+ *
+ * The kiosk needs to know this to decide between charging and queueing, and the
+ * check-in is already the request that answers it — so it is published from
+ * here rather than probed separately. An independent probe was sending a second
+ * full heartbeat every ten seconds, six times the intended traffic, and made
+ * the fleet page's idea of "connected" disagree with the tablet's. */
+let online = true;
+const listeners = new Set<(up: boolean) => void>();
+
+export function isServerReachable(): boolean {
+  return online;
+}
+
+export function onReachabilityChange(fn: (up: boolean) => void): () => void {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
+function setOnline(up: boolean) {
+  if (up === online) return;
+  online = up;
+  listeners.forEach((fn) => fn(up));
+}
 let pendingResults: Result[] = [];
 let onCheckUpdate: (() => void) | null = null;
 
@@ -118,6 +143,9 @@ export async function beat(): Promise<void> {
   if (!response.ok) {
     pendingResults = results.concat(pendingResults);
     failures += 1;
+    /* One failure is a blip; the kiosk should not start queueing sales because
+       a single request was dropped. Two in a row is a network. */
+    if (failures >= 2) setOnline(false);
     return;
   }
 
@@ -125,6 +153,7 @@ export async function beat(): Promise<void> {
      would leave Capgo's rollback catching only "fails to start" and never
      "starts fine, cannot reach the server" — which is how a repoint fails. */
   failures = 0;
+  setOnline(true);
   void markBundleHealthy();
 
   if (response.data.settings) setConfig(response.data.settings);
