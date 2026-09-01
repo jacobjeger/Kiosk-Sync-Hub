@@ -22,7 +22,18 @@ import { CapacitorUpdater } from "@capgo/capacitor-updater";
 import { setKioskVersion } from "./error-reporter";
 import { reportEvent, flushEvents } from "@/lib/commands";
 
-const MANIFEST_URL = "https://tcpdca.com/api/kiosk-update/manifest";
+/**
+ * Where updates come from — the same origin as everything else.
+ *
+ * This was hardcoded to tcpdca.com while the API base was configurable, which
+ * put a tablet in a loop it could not leave: the bundle polled the old host,
+ * was told the current version was the June one, and downgraded itself to it.
+ * The June bundle then did the same thing, forever. One origin for the app and
+ * its updates means a fleet pointed somewhere new can actually be updated from
+ * there.
+ */
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "https://tcpdca.com";
+const MANIFEST_URL = `${API_BASE}/api/kiosk-update/manifest`;
 const UPDATE_POLL_INTERVAL_MS = 15 * 60 * 1000;        // 15 minutes
 const IDLE_BEFORE_APPLY_MS = 30 * 1000;                // 30s with no input
 
