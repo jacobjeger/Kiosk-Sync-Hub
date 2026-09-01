@@ -1,5 +1,10 @@
 import { useState, useEffect } from "react";
-import { supabase } from "@/lib/supabase";
+import { getMemberHistory } from "@/lib/kiosk-actions";
+
+/** "September 2026" in the member's own timezone. */
+function monthLabel(): string {
+  return new Date().toLocaleDateString(undefined, { month: "long", year: "numeric" });
+}
 import type { Member } from "@/lib/types";
 import { X, Receipt, Store } from "lucide-react";
 
@@ -44,25 +49,16 @@ export function ProfileDrawer({
     async function loadTransactions() {
       setLoading(true);
 
-      const { data: activeCycle } = await supabase
-        .from("billing_cycles")
-        .select("id, name")
-        .eq("status", "active")
-        .single();
+      /* This month, keyed on month_key. It read billing_cycle_id before, and no
+         cycle has been created since cycles were retired — so the drawer showed
+         an empty history to everyone. month_key is what the member's statement
+         is cut from, so this is now the same set of purchases they will be
+         billed for. */
+      const result = await getMemberHistory(member.id);
+      setCycleName(monthLabel());
 
-      if (activeCycle) {
-        setCycleName(activeCycle.name);
-
-        const { data } = await supabase
-          .from("transactions")
-          .select(
-            "id, amount, created_at, description, business_id, businesses ( name )"
-          )
-          .eq("member_id", member.id)
-          .eq("billing_cycle_id", activeCycle.id)
-          .order("created_at", { ascending: false });
-
-        const txs = (data || []) as Transaction[];
+      const txs = (result.transactions || []) as Transaction[];
+      {
         setTransactions(txs);
 
         const totalsMap = new Map<string, BusinessTotal>();
@@ -83,9 +79,6 @@ export function ProfileDrawer({
         setBusinessTotals(
           Array.from(totalsMap.values()).sort((a, b) => b.total - a.total)
         );
-      } else {
-        setTransactions([]);
-        setBusinessTotals([]);
       }
 
       setLoading(false);

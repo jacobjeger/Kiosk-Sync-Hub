@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { supabase } from "@/lib/supabase";
+import { apiFetch } from "@/lib/api";
 import { db } from "@/lib/db";
 import type { Member, Business } from "@/lib/types";
 
@@ -17,94 +17,44 @@ export function useKioskData() {
     return { localMembers, localBusinesses };
   }, []);
 
-  const fetchFromSupabase = useCallback(async () => {
-    try {
-      const MEMBER_COLUMNS_FULL = "id, member_code, first_name, last_name, email, phone, balance, is_active, pin_code, card_status, card_last_four, status, pause_reason, kiosk_message, skip_pin, pin_confirmed, is_cash_collector, cash_collector_pin, created_at, updated_at";
-      const MEMBER_COLUMNS_LEGACY = "id, member_code, first_name, last_name, email, phone, balance, is_active, pin_code, card_status, status, pause_reason, kiosk_message, skip_pin, pin_confirmed, created_at, updated_at";
+  /**
+   * The roster.
+   *
+   * One call to Railway, replacing two PostgREST selects against Supabase that
+   * carried their own fallback for a column that might not exist. The server
+   * decides which members a till may see, and pin_code is no longer among the
+   * fields — the tablet gets `has_pin` and asks the server when it needs to
+   * check one.
+   */
+  const fetchRoster = useCallback(async () => {
+    const result = await apiFetch<{ members: Member[]; businesses: Business[] }>(
+      "/api/kiosk/data",
+      { method: "GET" }
+    );
 
-      const [membersRes, businessesRes] = await Promise.all([
-        supabase
-          .from("members")
-          .select(MEMBER_COLUMNS_FULL)
-          .in("status", ["active", "paused"])
-          .order("last_name"),
-        supabase
-          .from("businesses")
-          .select("id, name, description, category, is_active, preset_amounts, fee_percentage, icon_url, created_at, updated_at")
-          .eq("is_active", true)
-          .order("name"),
-      ]);
-
-      let fetchedMembersData: any[] = membersRes.error ? [] : (membersRes.data as any[]) ?? [];
-      if (membersRes.error) {
-        const errMsg = membersRes.error.message || "";
-        const errCode = membersRes.error.code || "";
-        const isCollectorColMissing =
-          errCode === "42703" ||
-          errCode === "PGRST204" ||
-          errMsg.includes("is_cash_collector") ||
-          errMsg.includes("cash_collector_pin") ||
-          errMsg.includes("card_last_four");
-        if (isCollectorColMissing) {
-          console.warn(
-            "[kiosk] Cash-collector columns not found on members table, falling back to legacy select."
-          );
-          const fallback = await supabase
-            .from("members")
-            .select(MEMBER_COLUMNS_LEGACY)
-            .in("status", ["active", "paused"])
-            .order("last_name");
-          if (fallback.error) throw fallback.error;
-          fetchedMembersData = (fallback.data as any[]) ?? [];
-        } else {
-          throw membersRes.error;
-        }
-      }
-
-      let fetchedBusinesses: Business[];
-      if (businessesRes.error) {
-        const errMsg = businessesRes.error.message || "";
-        const errCode = businessesRes.error.code || "";
-        const isColumnMissing =
-          errCode === "42703" ||
-          errCode === "PGRST204" ||
-          errMsg.includes("icon_url") ||
-          errMsg.includes("does not exist");
-        if (isColumnMissing) {
-          console.warn("[kiosk] icon_url column not found, fetching without it. Add icon_url TEXT column to businesses table in Supabase.");
-          const fallback = await supabase
-            .from("businesses")
-            .select("id, name, description, category, is_active, preset_amounts, fee_percentage, created_at, updated_at")
-            .eq("is_active", true)
-            .order("name");
-          if (fallback.error) throw fallback.error;
-          fetchedBusinesses = (fallback.data || []) as Business[];
-        } else {
-          throw businessesRes.error;
-        }
-      } else {
-        fetchedBusinesses = (businessesRes.data || []) as Business[];
-      }
-
-      const fetchedMembers = (fetchedMembersData || []) as Member[];
-
-      setMembers(fetchedMembers);
-      setBusinesses(fetchedBusinesses);
-      setIsError(false);
-
-      await db.members.clear();
-      await db.members.bulkPut(fetchedMembers);
-      await db.businesses.clear();
-      await db.businesses.bulkPut(fetchedBusinesses);
-    } catch (err) {
-      console.error("[kiosk] Failed to fetch from Supabase:", err);
+    if (!result.ok) {
+      console.error("[kiosk] Could not refresh the roster:", result.error);
       setIsError(true);
+      return;
     }
+
+    const { members: fetchedMembers, businesses: fetchedBusinesses } = result.data;
+    setMembers(fetchedMembers);
+    setBusinesses(fetchedBusinesses);
+    setIsError(false);
+
+    /* Cached locally so the till keeps working through an outage. Written after
+       the fetch succeeds, never before — a half-written cache is worse than a
+       stale one, because the stale one is at least internally consistent. */
+    await db.members.clear();
+    await db.members.bulkPut(fetchedMembers);
+    await db.businesses.clear();
+    await db.businesses.bulkPut(fetchedBusinesses);
   }, []);
 
   const refresh = useCallback(async () => {
-    await fetchFromSupabase();
-  }, [fetchFromSupabase]);
+    await fetchRoster();
+  }, [fetchRoster]);
 
   useEffect(() => {
     async function init() {
@@ -116,16 +66,16 @@ export function useKioskData() {
       }
       setIsLoading(false);
 
-      fetchFromSupabase();
+      fetchRoster();
     }
     init();
 
-    const interval = setInterval(fetchFromSupabase, 60000);
+    const interval = setInterval(fetchRoster, 60000);
 
     const handleVisibility = () => {
       if (document.visibilityState === "visible") {
         console.log("[kiosk] App resumed - refreshing data");
-        fetchFromSupabase();
+        fetchRoster();
       }
     };
     document.addEventListener("visibilitychange", handleVisibility);
@@ -134,7 +84,7 @@ export function useKioskData() {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [loadFromLocal, fetchFromSupabase]);
+  }, [loadFromLocal, fetchRoster]);
 
   return { members, businesses, isLoading, isError, refresh };
 }

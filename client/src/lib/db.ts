@@ -97,6 +97,32 @@ export class KioskDatabase extends Dexie {
       billingCyclesCache: "id, status, fetched_at",
       errorReports: "id, status, createdAt, signature",
     });
+
+    /* v7: queued sales carry a client_tx_id, and the cash tables are gone —
+       kiosk cash collection was retired server-side and the RPCs it called no
+       longer exist. Existing queued rows have no key, so they are stamped on
+       upgrade rather than dropped: a sale someone already made must not vanish
+       because the schema moved. */
+    this.version(7)
+      .stores({
+        members: "id, member_code, last_name, is_active",
+        businesses: "id, name, is_active",
+        offlineTransactions: "id, status, createdAt, clientTxId",
+        favoritesCache: "memberId",
+        coffeeTallies: "id, memberId, createdAt, status",
+        errorReports: "id, status, createdAt, signature",
+        offlineCashPayments: null,
+        cashPaymentsCache: null,
+        billingCyclesCache: null,
+      })
+      .upgrade(async (tx) => {
+        await tx
+          .table("offlineTransactions")
+          .toCollection()
+          .modify((row: { clientTxId?: string }) => {
+            if (!row.clientTxId) row.clientTxId = crypto.randomUUID();
+          });
+      });
   }
 }
 

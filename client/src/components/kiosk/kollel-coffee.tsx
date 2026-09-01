@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Coffee, CheckCircle2, X, Loader2, BarChart3, ChevronLeft, RotateCcw, Delete } from "lucide-react";
 import { db } from "@/lib/db";
-import { supabase } from "@/lib/supabase";
+import { apiFetch } from "@/lib/api";
 import type { CoffeeTally } from "@/lib/types";
 import { nanoid } from "nanoid";
 import { startOfDay, startOfWeek, startOfMonth, isAfter } from "date-fns";
@@ -76,17 +76,18 @@ export function KollelCoffeeTally({ onClose }: KollelCoffeeTallyProps) {
 
     (async () => {
       try {
-        const { error } = await supabase.from("coffee_tallies").insert({
-          type: selectedType,
-          count: 1,
-          created_at: tally.createdAt.toISOString(),
-          synced_from_device: true,
+        const posted = await apiFetch("/api/kiosk/coffee-tallies", {
+          body: {
+            type: selectedType,
+            count: 1,
+            created_at: tally.createdAt.toISOString(),
+          },
         });
-        if (!error) {
+        if (posted.ok) {
           await db.coffeeTallies.update(tally.id, { status: "synced", syncedAt: new Date() });
-          console.log("[kollel] Coffee tally synced to Supabase");
         } else {
-          console.warn("[kollel] Supabase insert failed:", error.message);
+          // Left pending; the offline queue picks it up on the next sync.
+          console.warn("[kollel] Tally not synced:", posted.error);
         }
       } catch (err) {
         console.warn("[kollel] Network error syncing coffee tally:", err);

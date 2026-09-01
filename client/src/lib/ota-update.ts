@@ -55,7 +55,7 @@ function isWeb(): boolean {
     : !(window as any).Capacitor.isNativePlatform();
 }
 
-async function checkAndApplyOnce(): Promise<void> {
+export async function checkForUpdate(): Promise<void> {
   if (isWeb()) return;
   try {
     const res = await fetch(MANIFEST_URL, { cache: "no-store" });
@@ -97,12 +97,14 @@ async function checkAndApplyOnce(): Promise<void> {
 }
 
 export async function initOtaCheck(): Promise<void> {
-  try {
-    // Tell the plugin that the app booted successfully, so it doesn't auto-roll back.
-    await CapacitorUpdater.notifyAppReady();
-  } catch (err) {
-    if (!isWeb()) console.warn("[ota] notifyAppReady failed", err);
-  }
+  /* notifyAppReady() is deliberately NOT called here.
+     Capgo reverts to the previous bundle if it is not called within
+     appReadyTimeout. Calling it at boot means that safety net only catches "the
+     bundle fails to start" — it cannot catch "the bundle starts fine and cannot
+     reach the API", which is exactly how a repoint fails. markBundleHealthy()
+     is called from the first successful server response instead, with
+     confirmIfOffline() covering the tablet that has no network at all. */
+  confirmIfOffline();
 
   if (isWeb()) return;
 
@@ -114,6 +116,47 @@ export async function initOtaCheck(): Promise<void> {
   }
 
   // First check happens shortly after boot; subsequent checks on a timer.
-  setTimeout(() => void checkAndApplyOnce(), 5_000);
-  setInterval(() => void checkAndApplyOnce(), UPDATE_POLL_INTERVAL_MS);
+  setTimeout(() => void checkForUpdate(), 5_000);
+  setInterval(() => void checkForUpdate(), UPDATE_POLL_INTERVAL_MS);
+}
+
+
+/* ---------------------------------------------------------------------------
+ * Confirming a bundle actually works
+ * ------------------------------------------------------------------------ */
+
+let confirmed = false;
+
+/**
+ * Tell Capgo this bundle is good.
+ *
+ * Called from the first successful server response, not from boot. A bundle
+ * that renders perfectly and cannot talk to the server is broken in the way
+ * that matters, and confirming it at startup would have thrown away the
+ * automatic rollback that catches precisely that.
+ *
+ * The offline case is why the timer exists: a tablet with no network will never
+ * see a successful response, and rolling back a perfectly good bundle because
+ * the canteen's router is down would be worse than the problem.
+ */
+export async function markBundleHealthy(): Promise<void> {
+  if (confirmed || isWeb()) return;
+  confirmed = true;
+  try {
+    await CapacitorUpdater.notifyAppReady();
+    console.log("[ota] bundle confirmed");
+  } catch (err) {
+    console.warn("[ota] could not confirm bundle:", err);
+  }
+}
+
+/** Confirm anyway if we are plainly offline and nothing will ever answer. */
+export function confirmIfOffline(afterMs = 45_000): void {
+  if (isWeb()) return;
+  setTimeout(() => {
+    if (!confirmed && typeof navigator !== "undefined" && navigator.onLine === false) {
+      console.log("[ota] offline at startup — confirming bundle to avoid a needless rollback");
+      void markBundleHealthy();
+    }
+  }, afterMs);
 }

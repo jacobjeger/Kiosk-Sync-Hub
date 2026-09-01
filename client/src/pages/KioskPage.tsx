@@ -15,7 +15,6 @@ import { PinChange } from "@/components/kiosk/pin-change";
 import { DeclinedCardPopup } from "@/components/kiosk/declined-card-popup";
 import { MessagePopup } from "@/components/kiosk/message-popup";
 import { QuestionModal } from "@/components/kiosk/question-modal";
-import CashCollectionPage from "@/pages/CashCollectionPage";
 import type { Member, Business } from "@/lib/types";
 import { useNetworkStatus } from "@/hooks/use-network-status";
 import {
@@ -25,7 +24,10 @@ import {
   updateMemberPin,
 } from "@/lib/kiosk-actions";
 import { setActiveMember, setSessionContext } from "@/lib/error-reporter";
-import { Banknote } from "lucide-react";
+import { EnrollmentScreen } from "@/components/kiosk/enrollment-screen";
+import { getIdentity } from "@/lib/device";
+import { startCheckins, setUpdateChecker } from "@/lib/commands";
+import { checkForUpdate } from "@/lib/ota-update";
 import {
   ChevronLeft,
   AlertTriangle,
@@ -41,8 +43,6 @@ type KioskStep =
   | "member"
   | "pin"
   | "pin_confirmation"
-  | "cash_collector_pin"
-  | "cash_collection"
   | "business"
   | "product"
   | "success"
@@ -53,10 +53,25 @@ const IDLE_TIMEOUT = 45000;
 const PIN_IDLE_TIMEOUT = 10000;
 
 export default function KioskPage() {
+  /* Nothing works until the tablet knows who it is: the roster, sales and
+     crash reports all authenticate as this device. So enrollment gates the
+     whole screen rather than being a setting somewhere inside it. */
+  const [enrolled, setEnrolled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    void getIdentity().then((id) => setEnrolled(Boolean(id.deviceId && id.deviceSecret)));
+  }, []);
+
+  // Check in every minute: telemetry up, commands and config down.
+  useEffect(() => {
+    if (!enrolled) return;
+    setUpdateChecker(() => void checkForUpdate());
+    return startCheckins();
+  }, [enrolled]);
+
   const { members, businesses, isLoading: dataLoading, refresh, isError } = useKioskData();
   const { isOnline, onReconnect } = useNetworkStatus();
-  const { pendingCount, pendingCashCount, isSyncing, queueTransaction, queueCashPayment, syncAll } =
-    useOfflineQueue(onReconnect);
+  const { pendingCount, isSyncing, queueTransaction, syncAll } = useOfflineQueue(onReconnect);
 
   useEffect(() => {
     return onReconnect(() => {
@@ -139,17 +154,16 @@ export default function KioskPage() {
       !selectedMember ||
       step === "member" ||
       step === "success" ||
-      step === "cash_collection" ||
       step === "pin_confirmation"
     )
       return;
 
-    const timeout = step === "pin" || step === "cash_collector_pin" ? PIN_IDLE_TIMEOUT : IDLE_TIMEOUT;
+    const timeout = step === "pin" ? PIN_IDLE_TIMEOUT : IDLE_TIMEOUT;
 
     let idleTimer: ReturnType<typeof setTimeout>;
     const startIdleTimer = () => {
       idleTimer = setTimeout(() => {
-        if (step === "pin" || step === "cash_collector_pin") {
+        if (step === "pin") {
           handleReset();
         } else {
           setShowIdleWarning(true);
@@ -202,14 +216,9 @@ export default function KioskPage() {
     if (member.kiosk_message) setShowKioskMessage(true);
   }, []);
 
-  const enterCashCollection = useCallback((member: Member) => {
-    if (member.cash_collector_pin) {
-      setStep("cash_collector_pin");
-    } else {
-      setStep("cash_collection");
-    }
-  }, []);
-
+  /* Kiosk cash collection is gone. The RPCs it called were dropped from the
+     server when cash was retired, so every button here led to a page that could
+     only fail. */
   const handleMemberSelect = (member: Member) => {
     setSelectedMember(member);
     if (member.is_active === false) {
@@ -273,6 +282,20 @@ export default function KioskPage() {
     setStep("success");
   };
 
+  /* Before the roster, before anything. The tablet cannot fetch members, take a
+     sale or file a crash report until it can prove which device it is. */
+  if (enrolled === null) {
+    return (
+      <div className="min-h-screen bg-stone-50 flex items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-stone-200 border-t-stone-900" />
+      </div>
+    );
+  }
+
+  if (!enrolled) {
+    return <EnrollmentScreen onEnrolled={() => setEnrolled(true)} />;
+  }
+
   if (dataLoading) {
     return (
       <div className="min-h-screen bg-stone-50 flex items-center justify-center">
@@ -283,17 +306,6 @@ export default function KioskPage() {
           </p>
         </div>
       </div>
-    );
-  }
-
-  if (step === "cash_collection" && selectedMember) {
-    return (
-      <CashCollectionPage
-        collector={selectedMember}
-        isOnline={isOnline && !isError}
-        queueCashPayment={queueCashPayment}
-        onExit={handleReset}
-      />
     );
   }
 
@@ -374,7 +386,6 @@ export default function KioskPage() {
               step !== "success" &&
               step !== "paused" &&
               step !== "disabled" &&
-              step !== "cash_collector_pin" &&
               step !== "pin_confirmation" && (
                 <button
                   data-testid="button-back"
@@ -405,9 +416,9 @@ export default function KioskPage() {
                 ) : (
                   <WifiOff className="w-3 h-3" />
                 )}
-                {(pendingCount + pendingCashCount) > 0 && (
+                {pendingCount > 0 && (
                   <span className="bg-amber-500 text-white text-[8px] font-bold w-3.5 h-3.5 rounded-full flex items-center justify-center -mr-0.5">
-                    {pendingCount + pendingCashCount}
+                    {pendingCount}
                   </span>
                 )}
               </button>
@@ -439,7 +450,7 @@ export default function KioskPage() {
                     )}
                   </div>
 
-                  {(pendingCount + pendingCashCount) > 0 ? (
+                  {pendingCount > 0 ? (
                     <div className="border-t border-stone-100 pt-2">
                       <div className="flex items-center gap-2 mb-2">
                         <CloudOff className="w-4 h-4 text-amber-500" />
@@ -447,12 +458,6 @@ export default function KioskPage() {
                           {pendingCount > 0 && (
                             <>
                               {pendingCount} pending transaction{pendingCount > 1 ? "s" : ""}
-                            </>
-                          )}
-                          {pendingCount > 0 && pendingCashCount > 0 && <> · </>}
-                          {pendingCashCount > 0 && (
-                            <>
-                              {pendingCashCount} pending cash payment{pendingCashCount > 1 ? "s" : ""}
                             </>
                           )}
                         </span>
@@ -482,7 +487,7 @@ export default function KioskPage() {
             </div>
           </div>
 
-          {step !== "success" && step !== "paused" && step !== "disabled" && step !== "cash_collector_pin" && step !== "pin_confirmation" && (
+          {step !== "success" && step !== "paused" && step !== "disabled" && step !== "pin_confirmation" && (
             <div className="flex items-center gap-1">
               {[
                 { key: "member", label: "Select" },
@@ -525,7 +530,6 @@ export default function KioskPage() {
             step !== "success" &&
             step !== "paused" &&
             step !== "pin" &&
-            step !== "cash_collector_pin" &&
             step !== "pin_confirmation" &&
             step !== "disabled" && (
               <button
@@ -574,15 +578,7 @@ export default function KioskPage() {
             />
           )}
 
-          {step === "cash_collector_pin" && selectedMember && (
-            <PinEntry
-              member={selectedMember}
-              expectedPin={selectedMember.cash_collector_pin}
-              label="Cash Collector PIN"
-              onSuccess={() => setStep("cash_collection")}
-              onCancel={handleReset}
-            />
-          )}
+
 
           {step === "pin_confirmation" && selectedMember && (
             <PinConfirmationScreen
@@ -651,30 +647,7 @@ export default function KioskPage() {
 
           {step === "business" && selectedMember && (
             <>
-              {selectedMember.is_cash_collector && (
-                <button
-                  onClick={() => enterCashCollection(selectedMember)}
-                  className="w-full mb-3 flex items-center justify-between gap-3 bg-amber-50 hover:bg-amber-100 border-2 border-amber-200 rounded-2xl p-3 text-left transition-colors active:scale-[0.98]"
-                  data-testid="button-cash-collection"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center">
-                      <Banknote className="w-5 h-5 text-amber-700" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-amber-900">
-                        Cash Collection Mode
-                      </p>
-                      <p className="text-xs text-amber-700">
-                        {selectedMember.cash_collector_pin
-                          ? "Enter collector PIN to start"
-                          : "Start collecting cash payments"}
-                      </p>
-                    </div>
-                  </div>
-                  <ChevronLeft className="w-5 h-5 text-amber-700 rotate-180" />
-                </button>
-              )}
+
               <BusinessSelector
                 businesses={businesses}
                 member={selectedMember}

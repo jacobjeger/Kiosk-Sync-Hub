@@ -45,6 +45,15 @@ export interface CoffeeTally {
 
 export interface OfflineTransaction {
   id: string;
+  /**
+   * The server's idempotency key for this sale, stamped when it is queued.
+   *
+   * Queued rows are replayed up to ten times. Without a key the server has no
+   * way to tell a retry from a second purchase, so a slow network would charge
+   * a member repeatedly for one lunch. It has to be assigned at enqueue and
+   * never regenerated — a fresh key on each attempt is the same bug.
+   */
+  clientTxId: string;
   memberId: string;
   memberName: string;
   businessId: string;

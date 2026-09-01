@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The policies this app asks for as device admin.
+
+  force-lock only. Notably absent is wipe-data: remote wipe is a capability we
+  would never use and it widens what a compromised portal could do to a fleet of
+  tablets. Device ownership already grants the kiosk controls we actually need
+  (lock task, user restrictions, reboot) without it being declared here.
+-->
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies>
+        <force-lock />
+    </uses-policies>
+</device-admin>

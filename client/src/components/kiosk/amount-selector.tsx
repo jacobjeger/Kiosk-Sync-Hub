@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from "react";
-import { supabase } from "@/lib/supabase";
+import { purchase } from "@/lib/api";
+import { presetAmounts as configuredAmounts } from "@/lib/config";
 import type { Member, Business } from "@/lib/types";
 import { Delete, MessageSquare, X, AlertTriangle, WifiOff } from "lucide-react";
 
 interface AmountSelectorProps {
   member: Member;
   business: Business;
-  onSuccess: (newBalance: number, amount: number) => void;
+  onSuccess: (monthToDate: number, amount: number, feeAmount?: number) => void;
   onCancel: () => void;
   onOfflineQueue?: (transaction: {
     memberId: string;
@@ -53,16 +54,18 @@ export function AmountSelector({
         setPresetAmounts(business.preset_amounts);
         return;
       }
-      const { data } = await supabase
-        .from("kiosk_settings")
-        .select("value")
-        .eq("key", "preset_amounts")
-        .single();
-      if (data?.value && Array.isArray(data.value))
-        setPresetAmounts(data.value);
+      // From the last check-in rather than a fetch of its own: one call home
+      // carries config, so this works with no network too.
+      setPresetAmounts(configuredAmounts());
     }
     loadPresetAmounts();
   }, [business.preset_amounts]);
+
+  /** RFC4122 v4 — Postgres will not accept nanoid's 21 chars as a uuid. */
+  const uuidv4 = () =>
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
 
   const processPayment = useCallback(
     async (amount: number) => {
@@ -70,14 +73,17 @@ export function AmountSelector({
       setProcessingAmount(amount);
       setError("");
 
-      const expectedBalance = Number(member.balance) - amount;
+      /* Adds, not subtracts. This showed the figure moving the wrong way on
+         every sale — it was written against a prepaid balance that no longer
+         exists. members.balance is now what the member owes for the month. */
+      const expectedMonthToDate = Number(member.balance) + amount;
 
       await new Promise((resolve) => setTimeout(resolve, LOCKOUT_DURATION));
 
       const optimisticSuccess = () => {
         setProcessing(false);
         setProcessingAmount(null);
-        onSuccess(expectedBalance, amount);
+        onSuccess(expectedMonthToDate, amount);
       };
 
       const deviceInfo = {
@@ -90,6 +96,10 @@ export function AmountSelector({
       };
 
       const transactionData = {
+        // Generated here so the online attempt and any later replay share one
+        // key: if the request is sent but the answer is lost, the retry is
+        // recognised as the same sale instead of charging twice.
+        clientTxId: uuidv4(),
         memberId: member.id,
         memberName: `${member.first_name} ${member.last_name}`,
         businessId: business.id,
@@ -107,66 +117,54 @@ export function AmountSelector({
         return;
       }
 
-      try {
-        const { data: activeCycle } = await supabase
-          .from("billing_cycles")
-          .select("id")
-          .eq("status", "active")
-          .single();
+      const result = await purchase({
+        member_id: member.id,
+        business_id: business.id,
+        amount,
+        description: `${business.name} - \u20AA${amount.toFixed(2)}`,
+        comment: comment.trim() || undefined,
+        client_tx_id: transactionData.clientTxId,
+        device_info: deviceInfo,
+      });
 
-        const { data: result, error: rpcError } = await supabase.rpc(
-          "process_kiosk_transaction",
-          {
-            p_member_id: member.id,
-            p_business_id: business.id,
-            p_amount: amount,
-            p_description: `${business.name} - \u20AA${amount.toFixed(2)}`,
-            p_notes: comment.trim() || null,
-            p_billing_cycle_id: activeCycle?.id || null,
-            p_source: "kiosk",
-            p_device_info: deviceInfo,
-            p_ip_address: null,
-          }
-        );
-
-        if (rpcError) {
-          if (onOfflineQueue) {
-            onOfflineQueue(transactionData);
-            optimisticSuccess();
-          } else {
-            setError("Database error - please try again");
-            setProcessing(false);
-            setProcessingAmount(null);
-            setTimeout(() => setError(""), 3000);
-          }
-          return;
-        }
-
-        if (result && !result.success) {
-          setError(result.error || "Transaction failed");
-          setProcessing(false);
-          setProcessingAmount(null);
-          setTimeout(() => setError(""), 3000);
-          return;
-        }
-
+      if (result.ok && result.data.success) {
         setProcessing(false);
         setProcessingAmount(null);
-        if (result?.balance_after !== undefined) {
-          onSuccess(result.balance_after, amount);
-        } else {
-          onSuccess(expectedBalance, amount);
-        }
-      } catch {
-        if (onOfflineQueue) {
-          onOfflineQueue(transactionData);
-          optimisticSuccess();
-        } else {
-          setError("Network error - please try again");
-          setProcessing(false);
-          setProcessingAmount(null);
-          setTimeout(() => setError(""), 3000);
-        }
+        onSuccess(
+          result.data.balance_after ?? expectedMonthToDate,
+          amount,
+          result.data.fee_agorot !== undefined ? result.data.fee_agorot / 100 : undefined
+        );
+        return;
+      }
+
+      /* The distinction that matters. A network failure means we could not ask,
+         so the sale is queued and replayed. A rejection means we asked and were
+         told no — an inactive member, an unavailable business — and queueing
+         that would retry a refusal every few minutes until the queue gave up.
+         The old code queued both. */
+      const refused =
+        (result.ok && !result.data.success) || (!result.ok && result.kind !== "network");
+
+      if (refused) {
+        const message = result.ok
+          ? result.data.error ?? "That could not be completed"
+          : result.error;
+        setError(message);
+        setProcessing(false);
+        setProcessingAmount(null);
+        setTimeout(() => setError(""), 3000);
+        return;
+      }
+
+      if (onOfflineQueue) {
+        onOfflineQueue(transactionData);
+        optimisticSuccess();
+      } else {
+        setError("Network error - please try again");
+        setProcessing(false);
+        setProcessingAmount(null);
+        setTimeout(() => setError(""), 3000);
       }
     },
     [member, business, onSuccess, comment, isOnline, onOfflineQueue]

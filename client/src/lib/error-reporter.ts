@@ -1,6 +1,6 @@
 import { nanoid } from "nanoid";
 import { db } from "@/lib/db";
-import { supabase } from "@/lib/supabase";
+import { reportError as postErrorReport } from "@/lib/api";
 import type { QueuedErrorReport } from "@/lib/db";
 
 // Reads at boot. Mutated by the kiosk session to attach the active member.
@@ -111,11 +111,7 @@ export async function flushErrorReports() {
         continue;
       }
       try {
-        const { error } = await supabase.from("kiosk_errors").insert({
-          device_id: r.device_id,
-          app_version: r.app_version,
-          bundle_version: r.bundle_version,
-          platform: r.platform,
+        const posted = await postErrorReport({
           error_type: r.error_type,
           message: r.message,
           stack: r.stack,
@@ -127,7 +123,7 @@ export async function flushErrorReports() {
           context: r.context,
           signature: r.signature,
         });
-        if (error) {
+        if (!posted.ok) {
           await db.errorReports.update(r.id, {
             retryCount: r.retryCount + 1,
             status: r.retryCount + 1 >= 5 ? "failed" : "pending",

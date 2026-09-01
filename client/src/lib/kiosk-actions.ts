@@ -1,106 +1,143 @@
-import { supabase } from "@/lib/supabase";
-import { db } from "@/lib/db";
+import { apiFetch, verifyPin } from "@/lib/api";
+import { getConfig } from "@/lib/config";
 
-// Ported from app/actions/kiosk.ts in the v0-payment-system-kiosk repo.
-// Server actions there use the admin client; here we go through the anon client.
-// RLS must allow these specific writes (members.update where id = self,
-// member_questions inserts where member_id = self, etc.).
+/**
+ * What a member can do at the till.
+ *
+ * Every one of these used to be a direct table write from the tablet against
+ * Supabase with the anon key: updating `members`, inserting into
+ * `member_questions` and `pending_card_changes` with whatever ids the client
+ * chose. They go through one authenticated route now, and the server decides
+ * what a device is allowed to change.
+ */
 
-export async function updateMemberPin(memberId: string, newPin: string) {
+type Ok = { success: true };
+type Err = { success: false; error: string };
+
+async function member<T = unknown>(
+  body: Record<string, unknown>
+): Promise<(Ok & { data: T }) | Err> {
+  const result = await apiFetch<{ ok: boolean; error?: string } & Record<string, unknown>>(
+    "/api/kiosk/member",
+    { body }
+  );
+  if (!result.ok) return { success: false, error: result.error };
+  if (!result.data.ok) return { success: false, error: String(result.data.error ?? "Failed") };
+  return { success: true, data: result.data as T };
+}
+
+/**
+ * Set a new PIN.
+ *
+ * The current PIN goes with it and is checked on the server. The old flow
+ * compared it in the browser against a pin_code shipped with the roster, which
+ * meant anyone who opened the console could change anyone's PIN.
+ */
+export async function updateMemberPin(
+  memberId: string,
+  newPin: string,
+  currentPin?: string
+): Promise<Ok | Err> {
   if (!/^\d{4}$/.test(newPin)) {
-    return { success: false as const, error: "PIN must be exactly 4 digits" };
+    return { success: false, error: "PIN must be exactly 4 digits" };
   }
-
-  const { error } = await supabase
-    .from("members")
-    .update({ pin_code: newPin, pin_confirmed: true })
-    .eq("id", memberId);
-
-  if (error) return { success: false as const, error: error.message };
-
-  // Keep the local cache in sync so the kiosk session sees the change without a refetch.
-  try {
-    const cached = await db.members.get(memberId);
-    if (cached) {
-      await db.members.put({ ...cached, pin_code: newPin, pin_confirmed: true });
-    }
-  } catch (err) {
-    console.warn("[kiosk-actions] failed to sync local member cache:", err);
-  }
-  return { success: true as const };
+  const result = await member({
+    action: "set_pin",
+    member_id: memberId,
+    pin: newPin,
+    current_pin: currentPin ?? "",
+  });
+  return result.success ? { success: true } : result;
 }
 
-export async function confirmMemberPin(memberId: string) {
-  const { error } = await supabase
-    .from("members")
-    .update({ pin_confirmed: true })
-    .eq("id", memberId);
-  if (error) return { success: false as const, error: error.message };
-  try {
-    const cached = await db.members.get(memberId);
-    if (cached) await db.members.put({ ...cached, pin_confirmed: true });
-  } catch (err) {
-    console.warn("[kiosk-actions] failed to sync local member cache:", err);
-  }
-  return { success: true as const };
+/** Check a PIN without the PIN ever being compared in the browser. */
+export async function checkMemberPin(
+  memberId: string,
+  pin: string
+): Promise<{ valid: boolean; error?: string }> {
+  const result = await verifyPin(memberId, pin);
+  if (!result.ok) return { valid: false, error: result.error };
+  return { valid: Boolean(result.data.valid) };
 }
 
-export async function submitQuestion(memberId: string, question: string) {
+export async function confirmMemberPin(memberId: string): Promise<Ok | Err> {
+  const result = await member({ action: "confirm_pin", member_id: memberId });
+  return result.success ? { success: true } : result;
+}
+
+export async function submitQuestion(memberId: string, question: string): Promise<Ok | Err> {
   if (!memberId || !question.trim()) {
-    return { success: false as const, error: "Member ID and question are required" };
+    return { success: false, error: "Member ID and question are required" };
   }
-  const { data, error } = await supabase
-    .from("member_questions")
-    .insert({
-      member_id: memberId,
-      question: question.trim(),
-      status: "pending",
-    })
-    .select()
-    .single();
-  if (error) return { success: false as const, error: error.message };
-  return { success: true as const, question: data };
+  const result = await member({ action: "ask", member_id: memberId, question });
+  return result.success ? { success: true } : result;
 }
 
 export async function getMemberQuestions(memberId: string) {
-  const { data, error } = await supabase
-    .from("member_questions")
-    .select("*")
-    .eq("member_id", memberId)
-    .order("created_at", { ascending: false })
-    .limit(20);
-  if (error) return { success: false as const, error: error.message, questions: [] };
-  return { success: true as const, questions: data || [] };
+  const result = await member<{ questions: unknown[] }>({
+    action: "questions",
+    member_id: memberId,
+  });
+  return result.success
+    ? { success: true as const, questions: result.data.questions }
+    : { success: false as const, error: result.error, questions: [] };
 }
 
 export async function getUnreadMessages(memberId: string) {
-  const { data, error } = await supabase
-    .from("member_questions")
-    .select("id, question, answer, answered_at")
-    .eq("member_id", memberId)
-    .eq("status", "answered")
-    .is("read_at", null)
-    .order("answered_at", { ascending: true });
-  if (error) return { success: false as const, messages: [] as any[] };
-  return { success: true as const, messages: data || [] };
+  const result = await member<{ messages: unknown[] }>({ action: "unread", member_id: memberId });
+  return result.success
+    ? { success: true as const, messages: result.data.messages }
+    : { success: false as const, error: result.error, messages: [] };
 }
 
-export async function markMessagesRead(messageIds: string[]) {
-  if (messageIds.length === 0) return { success: true as const };
-  const { error } = await supabase
-    .from("member_questions")
-    .update({ read_at: new Date().toISOString() })
-    .in("id", messageIds);
-  if (error) return { success: false as const, error: error.message };
-  return { success: true as const };
+export async function markMessagesRead(messageIds: string[]): Promise<Ok | Err> {
+  if (messageIds.length === 0) return { success: true };
+  const result = await member({ action: "mark_read", message_ids: messageIds });
+  return result.success ? { success: true } : result;
 }
 
-export async function getSystemSetting<T = unknown>(key: string): Promise<T | null> {
-  const { data, error } = await supabase
-    .from("system_settings")
-    .select("value")
-    .eq("key", key)
-    .maybeSingle();
-  if (error || !data) return null;
-  return (data.value as T) ?? null;
+export async function submitCardResolution(
+  memberId: string,
+  requestType: "retry_charge" | "update_card"
+): Promise<Ok | Err> {
+  const result = await member({
+    action: "card_resolution",
+    member_id: memberId,
+    request_type: requestType,
+  });
+  return result.success ? { success: true } : result;
+}
+
+/**
+ * A setting the server sent down on the last check-in.
+ *
+ * Synchronous and offline-safe on purpose: these are read while rendering, and
+ * a tablet that cannot reach us should still show the message it was last told
+ * to show rather than nothing.
+ */
+export function getSystemSetting<T = unknown>(key: string): T | null {
+  const value = getConfig()[key];
+  return (value as T) ?? null;
+}
+
+/** This month's purchases for the profile drawer. */
+export async function getMemberHistory(memberId: string) {
+  const result = await member<{ transactions: unknown[] }>({
+    action: "history",
+    member_id: memberId,
+  });
+  return result.success
+    ? { success: true as const, transactions: result.data.transactions }
+    : { success: false as const, error: result.error, transactions: [] };
+}
+
+/** Where this member shops most, for ordering the business list. */
+export async function getMemberFavourites(memberId: string) {
+  const result = await member<{ businesses: { business_id: string; purchases: number }[] }>({
+    action: "favourites",
+    member_id: memberId,
+  });
+  return result.success
+    ? { success: true as const, businesses: result.data.businesses }
+    : { success: false as const, error: result.error, businesses: [] };
 }

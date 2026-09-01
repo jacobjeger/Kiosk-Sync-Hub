@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, CreditCard, Loader2, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { supabase } from "@/lib/supabase";
+import { submitCardResolution, getSystemSetting } from "@/lib/kiosk-actions";
 import type { Member } from "@/lib/types";
 
 interface DeclinedCardMessage {
@@ -38,27 +38,14 @@ export function DeclinedCardPopup({
     const deadline = new Date(now.getTime() + 72 * 60 * 60 * 1000);
     setDeclineDeadline(deadline.toISOString());
 
-    (async () => {
-      const { data } = await supabase
-        .from("system_settings")
-        .select("value")
-        .eq("key", "declined_card_message")
-        .maybeSingle();
-      if (data?.value) setMessage(data.value as DeclinedCardMessage);
-    })();
+    // From the last check-in, so the wording is right even with no network.
+    const configured = getSystemSetting<DeclinedCardMessage>("declined_card_message");
+    if (configured) setMessage(configured);
   }, []);
 
   async function handleSubmitResolution(requestType: "retry_charge" | "update_card") {
     setSubmitting(true);
-    await supabase.from("pending_card_changes").insert({
-      member_id: member.id,
-      request_type: requestType,
-      status: "pending",
-    });
-    await supabase
-      .from("members")
-      .update({ card_status: "pending_review" })
-      .eq("id", member.id);
+    await submitCardResolution(member.id, requestType);
     setSubmitting(false);
     setSubmitted(true);
     setTimeout(() => {

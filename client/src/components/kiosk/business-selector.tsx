@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, memo, useCallback } from "react";
 import { Search, Store, Coffee, ShoppingBag, UtensilsCrossed } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { getMemberFavourites } from "@/lib/kiosk-actions";
 import { db } from "@/lib/db";
 import type { Business, Member } from "@/lib/types";
 
@@ -89,12 +89,9 @@ export function BusinessSelector({
           setIsLoadingFavorites(true);
         }
 
-        const { data, error } = await supabase
-          .from("transactions")
-          .select("business_id")
-          .eq("member_id", member.id)
-          .order("created_at", { ascending: false })
-          .limit(50);
+        const result = await getMemberFavourites(member.id);
+        const data = result.businesses.map((b) => ({ business_id: b.business_id }));
+        const error = result.success ? null : new Error(result.error);
 
         if (error) {
           setIsLoadingFavorites(false);

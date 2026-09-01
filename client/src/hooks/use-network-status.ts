@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { supabase } from "@/lib/supabase";
+import { checkin } from "@/lib/api";
+import { telemetry } from "@/lib/telemetry";
 
 const CHECK_INTERVAL = 10000;
 
@@ -10,11 +11,12 @@ export function useNetworkStatus() {
 
   const checkConnectivity = useCallback(async () => {
     try {
-      const { error } = await supabase
-        .from("businesses")
-        .select("id", { count: "exact", head: true })
-        .limit(1);
-      const connected = !error;
+      /* The check-in doubles as the connectivity probe: it is the request the
+         tablet has to make anyway, it proves the server is reachable *and* that
+         this device is still trusted, and it collects any queued commands as a
+         side effect. A separate probe would be a second thing to keep working. */
+      const result = await checkin({ telemetry: await telemetry() });
+      const connected = result.ok;
       setIsOnline((prev) => {
         if (!prev && connected) {
           onReconnectCallbacks.current.forEach((cb) => cb());
