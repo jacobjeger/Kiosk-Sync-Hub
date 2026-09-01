@@ -32,7 +32,13 @@ import { reportEvent, flushEvents } from "@/lib/commands";
  * its updates means a fleet pointed somewhere new can actually be updated from
  * there.
  */
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "https://tcpdca.com";
+/* Import the one in api.ts rather than keeping a second copy.
+   This file had its own constant with the apex as the default, and because this
+   is the constant that builds MANIFEST_URL it was the most dangerous of the
+   two: a build that forgot the variable pointed the update check at a Vercel
+   deployment still serving a June manifest, which then downgraded the tablet to
+   a pre-Railway bundle. Two constants that must agree will eventually not. */
+import { API_BASE } from "@/lib/api";
 const MANIFEST_URL = `${API_BASE}/api/kiosk-update/manifest`;
 const UPDATE_POLL_INTERVAL_MS = 15 * 60 * 1000;        // 15 minutes
 const IDLE_BEFORE_APPLY_MS = 30 * 1000;                // 30s with no input

@@ -29,6 +29,11 @@ export async function telemetry(): Promise<Record<string, unknown>> {
        itself is running one thing and being told about another, and the fleet
        page has to show the first. */
     bundle_version: await runningBundle(),
+    /* Reported every beat rather than once at enrolment. A token is reissued on
+       reinstall and occasionally on its own, and a stale one fails silently —
+       the send succeeds and nothing arrives — so the cheap fix is to keep
+       saying what it currently is. */
+    push_token: (await tryNative((p) => p.getPushToken()))?.token ?? null,
     android_release: status?.androidRelease ?? null,
     model: status?.model ?? null,
     battery_pct: status && status.batteryPct >= 0 ? status.batteryPct : null,

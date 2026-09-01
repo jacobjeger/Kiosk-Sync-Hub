@@ -8,9 +8,14 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.media.AudioManager;
+import android.net.wifi.WifiConfiguration;
+import android.net.wifi.WifiInfo;
+import android.net.wifi.WifiManager;
 import android.os.BatteryManager;
 import android.os.Build;
 import android.os.UserManager;
+import android.app.AlarmManager;
 import android.provider.Settings;
 import android.util.Log;
 
@@ -45,8 +50,27 @@ import java.util.LinkedList;
 public class KioskDevicePlugin extends Plugin {
 
     private static final String TAG = "KioskDevice";
+
+    /* The live plugin, so a push can reach the WebView.
+       Static because FirebaseMessagingService is constructed by the framework
+       and has no handle on the bridge. Null whenever the activity is gone,
+       which is the case the push is there to fix — the service starts the
+       activity too, and this only shortcuts the case where it was already up. */
+    private static KioskDevicePlugin instance;
+
+    /** Called from PdcaMessagingService. Safe when nothing is listening. */
+    public static void notifyWake() {
+        KioskDevicePlugin plugin = instance;
+        if (plugin == null) return;
+        try {
+            plugin.notifyListeners("wake", new JSObject());
+        } catch (Exception e) {
+            Log.w(TAG, "Could not deliver wake: " + e.getMessage());
+        }
+    }
     private static final String PREFS = "pdca_kiosk_device";
 
+    private static final String KEY_PUSH_TOKEN = "push_token";
     private static final String KEY_DEVICE_ID = "device_id";
     private static final String KEY_DEVICE_SECRET = "device_secret";
     private static final String KEY_ESCAPE_PIN = "escape_pin";
@@ -385,6 +409,328 @@ public class KioskDevicePlugin extends Plugin {
         }
     }
 
+
+    /* -----------------------------------------------------------------------
+     * The device itself
+     *
+     * Everything here exists because lock task takes the alternatives away. A
+     * tablet pinned to one app has no Settings, no quick tiles and no shade, so
+     * anything an on-site person would normally reach for — join the new
+     * router, turn the volume down, dim a screen in a dark room — has to arrive
+     * from the office instead or not at all.
+     * -------------------------------------------------------------------- */
+
+    /**
+     * Join a network.
+     *
+     * A canteen that changes its router would otherwise need every tablet
+     * factory reset, because a locked device cannot be walked through Wi-Fi
+     * setup by hand. `addNetwork` is deprecated for ordinary apps and returns
+     * -1 for them on Android 10+, but a device owner is still permitted to call
+     * it — which is exactly the case here and the reason this is not done with
+     * suggestions, whose prompts a locked tablet cannot show anyone.
+     */
+    @PluginMethod
+    public void addWifiNetwork(PluginCall call) {
+        if (!isOwner()) { notOwner(call); return; }
+
+        String ssid = call.getString("ssid", "");
+        String password = call.getString("password", "");
+        String security = call.getString("security", "wpa2");
+
+        if (ssid == null || ssid.isEmpty()) {
+            call.reject("An SSID is required");
+            return;
+        }
+
+        try {
+            WifiManager wifi = (WifiManager) getContext()
+                    .getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            if (wifi == null) { call.reject("No Wi-Fi service"); return; }
+            if (!wifi.isWifiEnabled()) wifi.setWifiEnabled(true);
+
+            WifiConfiguration config = new WifiConfiguration();
+            // Quoting is not cosmetic: the framework treats an unquoted SSID as
+            // a hex-encoded one and the network silently never matches.
+            config.SSID = "\"" + ssid + "\"";
+            if ("open".equals(security)) {
+                config.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE);
+            } else {
+                config.preSharedKey = "\"" + password + "\"";
+                config.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.WPA_PSK);
+            }
+
+            int id = wifi.addNetwork(config);
+            if (id == -1) {
+                // Already known: update rather than duplicate, so a password
+                // change reaches a tablet that already has the old one saved.
+                for (WifiConfiguration existing : safeConfigs(wifi)) {
+                    if (existing.SSID != null && existing.SSID.equals(config.SSID)) {
+                        config.networkId = existing.networkId;
+                        id = wifi.updateNetwork(config);
+                        break;
+                    }
+                }
+            }
+
+            if (id == -1) {
+                JSObject out = new JSObject();
+                out.put("ok", false);
+                out.put("reason", "refused_by_framework");
+                call.resolve(out);
+                return;
+            }
+
+            wifi.enableNetwork(id, false);   // false: do not drop the current link
+            wifi.saveConfiguration();
+
+            JSObject out = new JSObject();
+            out.put("ok", true);
+            out.put("networkId", id);
+            out.put("ssid", ssid);
+            call.resolve(out);
+        } catch (Exception e) {
+            Log.w(TAG, "addWifiNetwork failed: " + e.getMessage());
+            call.reject("Could not add the network: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void removeWifiNetwork(PluginCall call) {
+        if (!isOwner()) { notOwner(call); return; }
+        String ssid = call.getString("ssid", "");
+        if (ssid == null || ssid.isEmpty()) { call.reject("An SSID is required"); return; }
+
+        try {
+            WifiManager wifi = (WifiManager) getContext()
+                    .getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            if (wifi == null) { call.reject("No Wi-Fi service"); return; }
+
+            String quoted = "\"" + ssid + "\"";
+            boolean removed = false;
+            for (WifiConfiguration c : safeConfigs(wifi)) {
+                if (c.SSID != null && c.SSID.equals(quoted)) {
+                    removed = wifi.removeNetwork(c.networkId) || removed;
+                }
+            }
+            if (removed) wifi.saveConfiguration();
+
+            JSObject out = new JSObject();
+            out.put("ok", true);
+            out.put("removed", removed);
+            call.resolve(out);
+        } catch (Exception e) {
+            call.reject("Could not remove the network: " + e.getMessage());
+        }
+    }
+
+    /** Null rather than an exception when the caller may not enumerate. */
+    private java.util.List<WifiConfiguration> safeConfigs(WifiManager wifi) {
+        try {
+            java.util.List<WifiConfiguration> list = wifi.getConfiguredNetworks();
+            return list != null ? list : new java.util.ArrayList<WifiConfiguration>();
+        } catch (Exception e) {
+            return new java.util.ArrayList<WifiConfiguration>();
+        }
+    }
+
+    /** Media volume, 0–100. A till that someone muted is a till with no beep. */
+    @PluginMethod
+    public void setVolume(PluginCall call) {
+        Integer percent = call.getInt("percent");
+        if (percent == null) { call.reject("percent is required"); return; }
+
+        try {
+            AudioManager audio = (AudioManager) getContext()
+                    .getSystemService(Context.AUDIO_SERVICE);
+            if (audio == null) { call.reject("No audio service"); return; }
+
+            int max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+            int want = Math.round(max * Math.max(0, Math.min(100, percent)) / 100f);
+            audio.setStreamVolume(AudioManager.STREAM_MUSIC, want, 0);
+
+            JSObject out = new JSObject();
+            out.put("ok", true);
+            out.put("volume", want);
+            call.resolve(out);
+        } catch (Exception e) {
+            call.reject("Could not set the volume: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Screen brightness, 0–100.
+     *
+     * Writing SCREEN_BRIGHTNESS needs WRITE_SETTINGS, which an ordinary app has
+     * to ask a human for — impossible on a locked tablet. A device owner grants
+     * it to itself, so this works there and reports the gap everywhere else.
+     */
+    @PluginMethod
+    public void setBrightness(PluginCall call) {
+        Integer percent = call.getInt("percent");
+        if (percent == null) { call.reject("percent is required"); return; }
+        if (!isOwner()) { notOwner(call); return; }
+
+        try {
+            int value = Math.round(255 * Math.max(0, Math.min(100, percent)) / 100f);
+            Settings.System.putInt(getContext().getContentResolver(),
+                    Settings.System.SCREEN_BRIGHTNESS_MODE,
+                    Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL);
+            Settings.System.putInt(getContext().getContentResolver(),
+                    Settings.System.SCREEN_BRIGHTNESS, value);
+
+            JSObject out = new JSObject();
+            out.put("ok", true);
+            out.put("brightness", value);
+            call.resolve(out);
+        } catch (Exception e) {
+            JSObject out = new JSObject();
+            out.put("ok", false);
+            out.put("reason", "write_settings_denied");
+            call.resolve(out);
+        }
+    }
+
+    /**
+     * Hardware and OS restrictions.
+     *
+     * The one that matters is factory reset. A tablet somebody resets is a
+     * tablet that loses its credential, its queued sales and its device-owner
+     * status in one action, and the only way back is a physical re-provision.
+     */
+    @PluginMethod
+    public void setRestrictions(PluginCall call) {
+        if (!isOwner()) { notOwner(call); return; }
+
+        try {
+            DevicePolicyManager dpm = dpm();
+            ComponentName admin = admin();
+
+            if (call.getBoolean("blockFactoryReset") != null) {
+                setRestriction(dpm, admin, UserManager.DISALLOW_FACTORY_RESET,
+                        Boolean.TRUE.equals(call.getBoolean("blockFactoryReset")));
+            }
+            if (call.getBoolean("blockSafeBoot") != null) {
+                setRestriction(dpm, admin, UserManager.DISALLOW_SAFE_BOOT,
+                        Boolean.TRUE.equals(call.getBoolean("blockSafeBoot")));
+            }
+            if (call.getBoolean("blockUsbTransfer") != null) {
+                setRestriction(dpm, admin, UserManager.DISALLOW_USB_FILE_TRANSFER,
+                        Boolean.TRUE.equals(call.getBoolean("blockUsbTransfer")));
+            }
+            if (call.getBoolean("blockAddUser") != null) {
+                setRestriction(dpm, admin, UserManager.DISALLOW_ADD_USER,
+                        Boolean.TRUE.equals(call.getBoolean("blockAddUser")));
+            }
+            if (call.getBoolean("blockAppInstall") != null) {
+                setRestriction(dpm, admin, UserManager.DISALLOW_INSTALL_APPS,
+                        Boolean.TRUE.equals(call.getBoolean("blockAppInstall")));
+            }
+
+            JSObject out = new JSObject();
+            out.put("ok", true);
+            call.resolve(out);
+        } catch (Exception e) {
+            call.reject("Could not apply restrictions: " + e.getMessage());
+        }
+    }
+
+    /** A tablet on the wrong timezone stamps every sale wrong. */
+    @PluginMethod
+    public void setTimeZone(PluginCall call) {
+        if (!isOwner()) { notOwner(call); return; }
+        String tz = call.getString("timeZone", "");
+        if (tz == null || tz.isEmpty()) { call.reject("timeZone is required"); return; }
+
+        try {
+            AlarmManager alarm = (AlarmManager) getContext()
+                    .getSystemService(Context.ALARM_SERVICE);
+            if (alarm == null) { call.reject("No alarm service"); return; }
+            alarm.setTimeZone(tz);
+
+            JSObject out = new JSObject();
+            out.put("ok", true);
+            out.put("timeZone", tz);
+            call.resolve(out);
+        } catch (Exception e) {
+            call.reject("Could not set the timezone: " + e.getMessage());
+        }
+    }
+
+
+    /**
+     * The push token, if one has been issued.
+     *
+     * Read from storage rather than fetched, because the fetch is asynchronous
+     * and this is called on the check-in path — a token that is not there yet
+     * arrives on the next beat, which is soon enough for something that only
+     * matters once.
+     */
+    @PluginMethod
+    public void getPushToken(PluginCall call) {
+        SharedPreferences prefs = prefs();
+        String token = prefs.getString(KEY_PUSH_TOKEN, null);
+
+        JSObject out = new JSObject();
+        out.put("ok", true);
+        out.put("token", token);
+        call.resolve(out);
+    }
+
+
+    /**
+     * What the radio thinks of this connection.
+     *
+     * The link half of a speed test, and the half that explains a slow one: a
+     * tablet at -80 dBm on a congested 2.4 GHz channel is a placement problem,
+     * not a bandwidth problem, and no amount of throughput measurement says so.
+     * Reported alongside a timed download rather than instead of it, because
+     * signal strength and usable speed disagree often enough to be worth
+     * seeing together.
+     */
+    @PluginMethod
+    public void getLinkInfo(PluginCall call) {
+        try {
+            WifiManager wifi = (WifiManager) getContext()
+                    .getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            if (wifi == null) { call.reject("No Wi-Fi service"); return; }
+
+            WifiInfo info = wifi.getConnectionInfo();
+            JSObject out = new JSObject();
+            out.put("ok", true);
+
+            if (info == null || info.getNetworkId() == -1) {
+                out.put("connected", false);
+                call.resolve(out);
+                return;
+            }
+
+            int rssi = info.getRssi();
+            out.put("connected", true);
+            // SSID arrives quoted from the framework; strip it so it matches
+            // what a person typed and what the portal pushed.
+            String ssid = info.getSSID();
+            if (ssid != null) ssid = ssid.replaceAll("^\"|\"$", "");
+            out.put("ssid", ssid);
+            out.put("rssi", rssi);
+            /* 0-4 bars, the same scale the status bar uses, so a number here
+               means what somebody looking at the tablet would report. */
+            out.put("bars", WifiManager.calculateSignalLevel(rssi, 5));
+            out.put("linkSpeedMbps", info.getLinkSpeed());
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                out.put("frequencyMhz", info.getFrequency());
+                out.put("band", info.getFrequency() > 3000 ? "5GHz" : "2.4GHz");
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                out.put("rxLinkSpeedMbps", info.getRxLinkSpeedMbps());
+                out.put("txLinkSpeedMbps", info.getTxLinkSpeedMbps());
+            }
+            call.resolve(out);
+        } catch (Exception e) {
+            call.reject("Could not read the link: " + e.getMessage());
+        }
+    }
+
     /* -----------------------------------------------------------------------
      * Commands
      * -------------------------------------------------------------------- */
@@ -478,6 +824,7 @@ public class KioskDevicePlugin extends Plugin {
      */
     @Override
     public void load() {
+        instance = this;
         super.load();
         try {
             if (!isOwner()) return;

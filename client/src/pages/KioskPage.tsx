@@ -110,6 +110,20 @@ export default function KioskPage() {
      is baked into the web build and cannot describe a tablet that has updated
      since. Falls back to the constant on a build with no updater. */
   const [shownVersion, setShownVersion] = useState(APP_VERSION);
+
+  /* A message pushed from the office. There is no other way to reach whoever is
+     standing at a locked tablet — it has no notifications, no shade, and the
+     till is not a phone. Dismissed by hand rather than on a timer so it cannot
+     be missed by someone who looked away. */
+  const [pushedMessage, setPushedMessage] = useState<string | null>(null);
+  useEffect(() => {
+    const onMessage = (e: Event) => {
+      const text = (e as CustomEvent<{ text?: string }>).detail?.text;
+      if (text) setPushedMessage(text);
+    };
+    window.addEventListener("pdca:message", onMessage);
+    return () => window.removeEventListener("pdca:message", onMessage);
+  }, []);
   useEffect(() => {
     void runningBundle().then((v) => v && setShownVersion(v));
   }, []);
@@ -365,6 +379,20 @@ export default function KioskPage() {
 
   return (
     <div className="min-h-screen bg-stone-50 flex flex-col select-none">
+      {/* Pushed from the office. Dismissed by hand, not on a timer — a message
+          nobody was looking at when it expired was never delivered. */}
+      {pushedMessage && (
+        <div className="fixed inset-x-0 top-0 z-50 flex items-center justify-between gap-4 bg-amber-500 px-4 py-3 text-white shadow-lg">
+          <span className="text-sm font-medium">{pushedMessage}</span>
+          <button
+            className="rounded bg-white/20 px-3 py-1 text-xs font-semibold"
+            onClick={() => setPushedMessage(null)}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Visible only while the tablet is out of kiosk mode. It is the way back
           in without waiting out the grace window, and — more usefully — it is
           the thing that tells whoever walks past that this till is not locked,

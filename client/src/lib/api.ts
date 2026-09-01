@@ -29,7 +29,14 @@ import { getIdentity, updateEscapePin } from "@/lib/device";
  * Overridable at build time only, for testing against a deployment before DNS
  * moves. Baked into the bundle, so changing it means publishing a new one.
  */
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "https://tcpdca.com";
+/* The apex is NOT the fallback.
+   tcpdca.com still resolves to an old Vercel deployment, and its
+   /api/kiosk-update/manifest happily serves a June bundle -- so a build that
+   forgot VITE_API_BASE_URL did not fail loudly, it pointed the fleet at a dead
+   API and then let that host downgrade every tablet to a pre-Railway bundle
+   that writes to Supabase. That happened. The default is the host we actually
+   run on, so forgetting the variable is survivable. */
+export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "https://www.tcpdca.com";
 
 /** Long enough for a slow canteen network, short enough not to strand a sale. */
 const TIMEOUT_MS = 20_000;

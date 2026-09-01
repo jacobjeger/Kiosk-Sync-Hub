@@ -45,6 +45,46 @@ export interface KioskDevicePlugin {
   markCommandExecuted(o: { commandId: string }): Promise<{ ok: boolean }>;
   wasCommandExecuted(o: { commandId: string }): Promise<{ executed: boolean }>;
   installCaCert(o: { certificate: string }): Promise<NativeResult & { already?: boolean }>;
+
+  /* The device itself. Each degrades to { ok: false, reason } off a provisioned
+     tablet rather than throwing, so the caller reports a capability gap instead
+     of an error. */
+  addWifiNetwork(o: {
+    ssid: string;
+    password?: string;
+    security?: "wpa2" | "open";
+  }): Promise<NativeResult & { networkId?: number; ssid?: string }>;
+  removeWifiNetwork(o: { ssid: string }): Promise<NativeResult & { removed?: boolean }>;
+  setVolume(o: { percent: number }): Promise<NativeResult & { volume?: number }>;
+  setBrightness(o: { percent: number }): Promise<NativeResult & { brightness?: number }>;
+  setRestrictions(o: {
+    blockFactoryReset?: boolean;
+    blockSafeBoot?: boolean;
+    blockUsbTransfer?: boolean;
+    blockAddUser?: boolean;
+    blockAppInstall?: boolean;
+  }): Promise<NativeResult>;
+  setTimeZone(o: { timeZone: string }): Promise<NativeResult & { timeZone?: string }>;
+
+  /** Radio-level facts about the current connection. */
+  getLinkInfo(): Promise<{
+    ok: boolean;
+    connected?: boolean;
+    ssid?: string;
+    rssi?: number;
+    bars?: number;
+    linkSpeedMbps?: number;
+    frequencyMhz?: number;
+    band?: string;
+    rxLinkSpeedMbps?: number;
+    txLinkSpeedMbps?: number;
+  }>;
+
+  /** The FCM token, once one has been issued. Null before that. */
+  getPushToken(): Promise<{ ok: boolean; token: string | null }>;
+
+  /** Fired when a push says there is something waiting. */
+  addListener(event: "wake", fn: () => void): Promise<{ remove: () => Promise<void> }>;
   installBundledCa(): Promise<NativeResult & { already?: boolean }>;
   unenroll(o: { pin: string }): Promise<NativeResult>;
 }

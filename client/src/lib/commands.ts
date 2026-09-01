@@ -6,6 +6,7 @@ import { tryNative, available } from "@/lib/kiosk-device";
 import { setBundleVersion } from "@/lib/version";
 import { getIdentity } from "@/lib/device";
 import { reconcile } from "@/lib/lockdown";
+import { runSpeedTest } from "@/lib/speed-test";
 
 /**
  * Calling home.
@@ -71,6 +72,22 @@ export function setUpdateChecker(fn: () => void) {
   onCheckUpdate = fn;
 }
 
+
+/** Run a native call and turn its result into a command result. */
+async function native(
+  command: Command,
+  fn: (p: import("@/lib/kiosk-device").KioskDevicePlugin) => Promise<{ ok?: boolean; reason?: string }>
+): Promise<Result> {
+  const out = await tryNative(fn);
+  return out?.ok
+    ? { command_id: command.id, status: "done", result: out }
+    : {
+        command_id: command.id,
+        status: "failed",
+        error: out?.reason ?? "not available on this build",
+      };
+}
+
 async function execute(command: Command): Promise<Result> {
   /* Asked before acting. A `reboot` interrupts the very report that would say
      it happened, so the tablet keeps its own record of what it has run — and
@@ -134,6 +151,75 @@ async function execute(command: Command): Promise<Result> {
               status: "failed",
               error: out?.reason ?? "not available on this build",
             };
+      }
+
+      /* The device controls. All the same shape: ask the native side, report
+         what it says. A tablet that is not device owner answers `ok: false`
+         with a reason rather than failing, so the portal shows "this tablet
+         cannot do that" instead of a command stuck retrying. */
+      case "add_wifi": {
+        const ssid = String(command.payload?.ssid ?? "");
+        if (!ssid) return { command_id: command.id, status: "failed", error: "no ssid" };
+        return native(command, (p) =>
+          p.addWifiNetwork({
+            ssid,
+            password: String(command.payload?.password ?? ""),
+            security: command.payload?.security === "open" ? "open" : "wpa2",
+          })
+        );
+      }
+
+      case "remove_wifi": {
+        const ssid = String(command.payload?.ssid ?? "");
+        if (!ssid) return { command_id: command.id, status: "failed", error: "no ssid" };
+        return native(command, (p) => p.removeWifiNetwork({ ssid }));
+      }
+
+      case "set_volume":
+        return native(command, (p) =>
+          p.setVolume({ percent: Number(command.payload?.percent ?? 50) })
+        );
+
+      case "set_brightness":
+        return native(command, (p) =>
+          p.setBrightness({ percent: Number(command.payload?.percent ?? 50) })
+        );
+
+      case "set_restrictions":
+        return native(command, (p) =>
+          p.setRestrictions(command.payload as Record<string, boolean>)
+        );
+
+      case "set_time_zone": {
+        const tz = String(command.payload?.time_zone ?? "");
+        if (!tz) return { command_id: command.id, status: "failed", error: "no time zone" };
+        return native(command, (p) => p.setTimeZone({ timeZone: tz }));
+      }
+
+      case "show_message": {
+        /* Handled in the web layer rather than natively: the kiosk already owns
+           the whole screen, and a native toast on a locked tablet is smaller
+           and shorter-lived than the thing it is trying to say. */
+        window.dispatchEvent(
+          new CustomEvent("pdca:message", {
+            detail: {
+              text: String(command.payload?.text ?? ""),
+              until: command.payload?.until ?? null,
+            },
+          })
+        );
+        return { command_id: command.id, status: "done" };
+      }
+
+      case "speed_test": {
+        /* Reported as the command's result rather than as telemetry: it is a
+           measurement somebody asked for at a moment in time, not a property of
+           the tablet, and averaging it into the fleet view would hide exactly
+           the spike that prompted the question. */
+        const result = await runSpeedTest();
+        return result.ok
+          ? { command_id: command.id, status: "done", result }
+          : { command_id: command.id, status: "failed", error: result.error ?? "test failed", result };
       }
 
       case "reboot": {
@@ -226,6 +312,14 @@ export async function beat(): Promise<void> {
   for (const command of response.data.commands ?? []) {
     pendingResults.push(await execute(command as Command));
   }
+
+  /* Report straight away rather than on the next beat.
+     Results are gathered at the top of this function but commands run at the
+     bottom, so anything executed here would otherwise wait a full interval to
+     be acknowledged — the portal showed a lock as still queued for up to two
+     minutes after the tablet had already locked. `reload` and `reboot` worked
+     around it by flushing themselves; this makes it true for every command. */
+  if (pendingResults.length > 0) await flush();
 }
 
 export function startCheckins(): () => void {
@@ -250,8 +344,23 @@ export function startCheckins(): () => void {
   };
   window.addEventListener("online", onOnline);
 
+  /* A push saying there is something waiting. The poll stays exactly as it was:
+     push is a shortcut, not the transport. Anything that depends on a message
+     actually arriving would break on a tablet with no Play Services, no network
+     at the moment of sending, or a token the server has not caught up with. */
+  let removeWake: (() => Promise<void>) | null = null;
+  void tryNative(async (p) => {
+    const handle = await p.addListener("wake", () => {
+      failures = 0;
+      void beat();
+    });
+    removeWake = handle.remove;
+    return { ok: true };
+  });
+
   return () => {
     if (timer) clearTimeout(timer);
     window.removeEventListener("online", onOnline);
+    void removeWake?.();
   };
 }
