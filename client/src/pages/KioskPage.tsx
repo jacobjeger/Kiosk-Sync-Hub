@@ -261,7 +261,7 @@ export default function KioskPage() {
   // After PIN entry, drop into the normal business flow. Cash collectors get an
   // additional "Cash Collection" CTA inside the business step (see business render).
   const advanceAfterPin = useCallback((member: Member) => {
-    if (member.pin_code && !member.pin_confirmed) {
+    if (member.has_pin && !member.pin_confirmed) {
       setStep("pin_confirmation");
       return;
     }
@@ -303,7 +303,13 @@ export default function KioskPage() {
       })
       .catch((err) => console.warn("[kiosk] unread fetch failed", err));
 
-    const shouldRequirePin = member.pin_code && !member.skip_pin;
+    /* has_pin, not pin_code.
+       The roster stopped carrying pin_code when the kiosk route was closed --
+       shipping every member's PIN to every till was the thing that fixed -- and
+       these three call sites were never brought forward. `member.pin_code` has
+       been undefined ever since, so the expression was always false and the
+       tablet asked nobody for a PIN. */
+    const shouldRequirePin = member.has_pin && !member.skip_pin;
     if (shouldRequirePin) {
       setStep("pin");
     } else {
@@ -318,7 +324,7 @@ export default function KioskPage() {
       setStep("member");
     } else if (step === "business") {
       const shouldRequirePin =
-        selectedMember?.pin_code && !selectedMember?.skip_pin;
+        selectedMember?.has_pin && !selectedMember?.skip_pin;
       if (shouldRequirePin) {
         setStep("pin");
       } else {
@@ -464,7 +470,8 @@ export default function KioskPage() {
               onSuccess={async (newPin) => {
                 const res = await updateMemberPin(selectedMember.id, newPin);
                 if (res.success) {
-                  setSelectedMember({ ...selectedMember, pin_code: newPin, pin_confirmed: true });
+                  // The till records that a PIN exists, not what it is.
+                  setSelectedMember({ ...selectedMember, has_pin: true, pin_confirmed: true });
                 }
                 setShowPinChange(false);
               }}
@@ -600,7 +607,7 @@ export default function KioskPage() {
             <div className="flex items-center gap-1">
               {[
                 { key: "member", label: "Select" },
-                ...(selectedMember?.pin_code && !selectedMember?.skip_pin
+                ...(selectedMember?.has_pin && !selectedMember?.skip_pin
                   ? [{ key: "pin", label: "PIN" }]
                   : []),
                 { key: "business", label: "Business" },

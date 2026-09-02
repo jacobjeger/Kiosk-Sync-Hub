@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { checkMemberPin } from "@/lib/kiosk-actions";
 import { Delete } from "lucide-react";
 import type { Member } from "@/lib/types";
 
@@ -34,15 +35,23 @@ export function PinChange({ member, onSuccess, onCancel }: PinChangeProps) {
     if (step === "current") {
       setCurrentPin(next);
       if (next.length === 4) {
-        if (next === member.pin_code) {
-          setTimeout(() => setStep("enter"), 250);
-        } else {
-          setError("Incorrect PIN");
+        /* Checked on the server. This compared against member.pin_code, which
+           the roster no longer carries -- so it matched nothing and no one
+           could get past this step. The server is also the only place that
+           should ever hold the answer. */
+        void (async () => {
+          const check = await checkMemberPin(member.id, next);
+          if (check.valid) {
+            setTimeout(() => setStep("enter"), 250);
+            return;
+          }
+          setError(check.error ?? "Incorrect PIN");
           setTimeout(() => {
             setCurrentPin("");
             setError("");
-          }, 1500);
-        }
+          }, 900);
+        })();
+        return;
       }
     } else if (step === "enter") {
       setPin(next);

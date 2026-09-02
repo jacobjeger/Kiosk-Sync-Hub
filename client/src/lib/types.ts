@@ -20,7 +20,12 @@ export interface Member {
   phone: string | null;
   balance: number;
   is_active: boolean;
-  pin_code: string | null;
+  /* Whether a PIN is set, never the PIN itself.
+     The roster stopped shipping pin_code when the kiosk route was closed, but
+     this field stayed on the type -- so every reader still compiled while
+     reading undefined at runtime, which is how the tablet came to ask nobody
+     for a PIN. Removing it is what makes the compiler find the rest. */
+  has_pin?: boolean;
   card_status?: "active" | "declined" | "pending_review";
   card_last_four: string | null;
   status: "active" | "paused" | "deleted";
@@ -29,7 +34,8 @@ export interface Member {
   skip_pin: boolean;
   pin_confirmed?: boolean;
   is_cash_collector: boolean;
-  cash_collector_pin: string | null;
+  /* Same reasoning: the till is told there is one, not what it is. */
+  has_cash_collector_pin?: boolean;
   created_at: string;
   updated_at: string;
 }

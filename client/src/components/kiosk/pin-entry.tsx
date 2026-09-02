@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Delete } from "lucide-react";
 import type { Member } from "@/lib/types";
+import { checkMemberPin } from "@/lib/kiosk-actions";
 
 interface PinEntryProps {
   member: Member;
@@ -14,35 +15,64 @@ export function PinEntry({ member, onSuccess, onCancel, expectedPin, label }: Pi
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [attempts, setAttempts] = useState(0);
-  const targetPin = expectedPin ?? member.pin_code;
+  const [checking, setChecking] = useState(false);
 
   const handleNumpadPress = (key: string) => {
     if (key === "backspace") {
       setPin((prev) => prev.slice(0, -1));
       setError("");
-    } else if (pin.length < 4) {
+    } else if (pin.length < 4 && !checking) {
       const newPin = pin + key;
       setPin(newPin);
       setError("");
 
       if (newPin.length === 4) {
-        if (newPin === targetPin) {
-          onSuccess();
-        } else {
-          const newAttempts = attempts + 1;
-          setAttempts(newAttempts);
-          setPin("");
-
-          if (newAttempts >= 3) {
-            setError("Too many attempts");
-            setTimeout(() => onCancel(), 1500);
-          } else {
-            setError(`Incorrect PIN. ${3 - newAttempts} left`);
-          }
-        }
+        void check(newPin);
       }
     }
   };
+
+
+  /* Checked on the server, never in the browser.
+     This compared the entry against member.pin_code, which the roster stopped
+     carrying when the kiosk route was closed -- so the comparison had been
+     against undefined ever since and no PIN could ever be right. Comparing here
+     was the original problem in any case: it required shipping every member's
+     PIN to every till, and anyone who opened the console could read them.
+     `expectedPin` stays for the confirm-your-new-PIN step, where the value
+     being matched is one the member just typed on this screen and nothing
+     secret is being sent anywhere. */
+  async function check(entered: string) {
+    if (expectedPin != null) {
+      if (entered === expectedPin) return onSuccess();
+      return fail();
+    }
+
+    setChecking(true);
+    const result = await checkMemberPin(member.id, entered);
+    setChecking(false);
+
+    if (result.valid) return onSuccess();
+    if (result.error) {
+      setPin("");
+      setError(result.error);
+      return;
+    }
+    fail();
+  }
+
+  function fail() {
+    const newAttempts = attempts + 1;
+    setAttempts(newAttempts);
+    setPin("");
+
+    if (newAttempts >= 3) {
+      setError("Too many attempts");
+      setTimeout(() => onCancel(), 1500);
+    } else {
+      setError(`Incorrect PIN. ${3 - newAttempts} left`);
+    }
+  }
 
   return (
     <div className="flex flex-col items-center">
